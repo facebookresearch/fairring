@@ -1,0 +1,49 @@
+package:
+  name: fairring
+  version: "{{ FAIRRING_VERSION }}"
+
+source:
+  - git_url: https://github.com/NVIDIA/nccl
+    git_rev: "v2.8.3-1"
+    folder: nccl
+  - git_url: https://github.com/pytorch/tensorpipe
+    git_rev: main
+    folder: tensorpipe
+  - git_url: https://github.com/facebookresearch/fairring
+    git_rev: "v{{ FAIRRING_LATEST_TAG }}"
+    folder: fairring
+
+requirements:
+  build:
+    - gxx >=10,<11
+
+  host:
+    - python
+    - setuptools
+    - pytorch-mutex 1.0 cuda
+    - pytorch =={{ PYTORCH_VERSION }}
+    - cudatoolkit >={{ CUDA_MAJOR_VERSION }}.{{ CUDA_MINOR_VERSION }},<{{ CUDA_MAJOR_VERSION }}.{{ (CUDA_MINOR_VERSION|int) + 1 }}
+    # - nccl >=2.8.3,<2.8.4
+
+  run:
+    - python
+    - pytorch-mutex 1.0 cuda
+    - pytorch =={{ PYTORCH_VERSION }}
+    - cudatoolkit >={{ CUDA_MAJOR_VERSION }}.{{ CUDA_MINOR_VERSION }},<{{ CUDA_MAJOR_VERSION }}.{{ (CUDA_MINOR_VERSION|int) + 1 }}
+
+  run_constrained:
+     - cpuonly <0
+
+build:
+  string: py{{ PYTHON_VERSION }}_cuda{{ CUDA_MAJOR_VERSION }}.{{ CUDA_MINOR_VERSION }}
+  script_env:
+    - CUDA_HOME
+    - FAIRRING_VERSION
+    - SYSTEM_CXX
+  include_recipe: False
+
+about:
+  home: https://github.com/facebookresearch/fairring
+  license: BSD
+  license_file: fairring/LICENSE.txt
+  summary: 'Fairring (FAIR + Herring) is a plug-in for PyTorch that provides a process group for distributed training that outperforms NCCL at large scales'

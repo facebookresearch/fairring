@@ -27,6 +27,9 @@ def get_git_is_dirty():
 
 
 def get_version():
+    injected_version = os.environ.get("FAIRRING_VERSION", None)
+    if injected_version is not None:
+        return injected_version
     today = datetime.date.today().strftime("%Y.%m.%d")
     git_hash = get_git_commit_hash()
     is_dirty = get_git_is_dirty()

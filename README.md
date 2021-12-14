@@ -17,7 +17,15 @@ Herring, on the other side, uses a client-server approach: every machine sends i
 
 Amazon, [Google](https://cloud.google.com/blog/topics/developers-practitioners/optimize-training-performance-reduction-server-vertex-ai) and [ByteDance](https://github.com/bytedance/byteps) have all adopted this client-server technique, and Fairring is FAIR's take on it!
 
-## Installation
+## Installation with conda pre-built binaries
+
+```bash
+conda create -n fairring python=3.9 pytorch cudatoolkit=11.1 fairring -c fairring -c pytorch-nightly -c nvidia -y
+```
+
+The Python version can be any of 3.6, 3.7, 3.8 or 3.9, and the CUDA version  any of 10.2, 11.1, 11.3 or 11.5.
+
+## Installation from sources
 
 ```bash
 # Install CUDA and the static build of NCCL

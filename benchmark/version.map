@@ -9,8 +9,5 @@
     PyInit_benchmark_fairring;
   local:
     nccl*;
-    extern "C++" {
-      *tensorpipe::*;
-    };
     *;
 };

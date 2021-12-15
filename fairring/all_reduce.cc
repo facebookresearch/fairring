@@ -115,6 +115,36 @@ AllReduceFairring::AllReduceFairring(
   std::vector<NcclComm> allGatherComms = createManyNcclComms(
       idxOfMyFirstDevice, devices_, devicesPerMachine, allGatherUniqueId);
 
+  std::vector<NcclComm> collectComms;
+  std::vector<NcclComm> diffuseComms;
+  for (const auto deviceOffset : c10::irange(numDevices)) {
+    ncclUniqueId collectUniqueId;
+    ncclUniqueId diffuseUniqueId;
+    if (idxOfMyMachine == 0) {
+      NCCL_CHECK(ncclGetUniqueId(&collectUniqueId));
+      NCCL_CHECK(ncclGetUniqueId(&diffuseUniqueId));
+      store->set(
+          "devices/" + std::to_string(idxOfMyFirstDevice + deviceOffset) +
+              "/collect_nccl_id",
+          podToByteString(collectUniqueId));
+      store->set(
+          "devices/" + std::to_string(idxOfMyFirstDevice + deviceOffset) +
+              "/diffuse_nccl_id",
+          podToByteString(diffuseUniqueId));
+    } else {
+      collectUniqueId = byteStringToPod<ncclUniqueId>(store->get(
+          "devices/" + std::to_string(idxOfMyFirstDevice + deviceOffset) +
+          "/collect_nccl_id"));
+      diffuseUniqueId = byteStringToPod<ncclUniqueId>(store->get(
+          "devices/" + std::to_string(idxOfMyFirstDevice + deviceOffset) +
+          "/diffuse_nccl_id"));
+    }
+    collectComms.push_back(createOneNcclComm(
+        idxOfMyMachine, devices_[deviceOffset], numMachines, collectUniqueId));
+    diffuseComms.push_back(createOneNcclComm(
+        idxOfMyMachine, devices_[deviceOffset], numMachines, diffuseUniqueId));
+  }
+
   nodes_.reserve(numDevices);
   for (const auto deviceOffset : c10::irange(numDevices)) {
     nodes_.push_back(std::make_unique<DeviceFairring>(
@@ -125,18 +155,11 @@ AllReduceFairring::AllReduceFairring(
         devicesPerMachine,
         store,
         std::move(reduceScatterComms[deviceOffset]),
+        std::move(collectComms[deviceOffset]),
+        std::move(diffuseComms[deviceOffset]),
         std::move(allGatherComms[deviceOffset]),
         maxMemoryAllocatedInBytes,
         sliceSizeInBytes));
-    nodes_[deviceOffset]->startListening();
-  }
-
-  for (const auto deviceOffset : c10::irange(numDevices)) {
-    nodes_[deviceOffset]->connect();
-  }
-
-  for (const auto deviceOffset : c10::irange(numDevices)) {
-    nodes_[deviceOffset]->acceptPipes();
   }
 
   streams_.reserve(numDevices);

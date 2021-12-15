@@ -6,17 +6,11 @@ source:
   - git_url: https://github.com/NVIDIA/nccl
     git_rev: "v2.8.3-1"
     folder: nccl
-  - git_url: https://github.com/pytorch/tensorpipe
-    git_rev: main
-    folder: tensorpipe
   - git_url: https://github.com/facebookresearch/fairring
     git_rev: "v{{ FAIRRING_LATEST_TAG }}"
     folder: fairring
 
 requirements:
-  build:
-    - gxx >=10,<11
-
   host:
     - python
     - setuptools
@@ -39,7 +33,6 @@ build:
   script_env:
     - CUDA_HOME
     - FAIRRING_VERSION
-    - SYSTEM_CXX
   include_recipe: False
 
 about:

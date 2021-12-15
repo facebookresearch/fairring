@@ -28,13 +28,10 @@ setup(
                 "benchmark.cc",
             ],
             include_dirs=[get_my_dir() + "/.."],
-            libraries=["nccl_static", "tensorpipe", "tensorpipe_cuda"],
+            libraries=["nccl_static"],
             extra_compile_args={
                 "cxx": [
                     "-g",
-                    # Needed to enable coroutines in g++ 10.
-                    "-std=c++20",
-                    "-fcoroutines",
                 ],
             },
             # These two options are needed to make NCCL and TensorPipe private

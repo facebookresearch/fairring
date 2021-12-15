@@ -54,7 +54,7 @@ class Client {
       size_t numEpochs,
       c10::intrusive_ptr<c10d::Store> store,
       bool useNccl,
-      std::optional<size_t> parallelism)
+      c10::optional<size_t> parallelism)
       : machineIdx_(machineIdx),
         deviceIdx_(deviceIdx),
         numMachines_(numMachines),
@@ -177,26 +177,26 @@ class Client {
                   .device(c10::Device(c10::kCUDA, 0)))
               .expand({buckets_[bucketIdx].numel()});
 
-      // if (!buckets_[bucketIdx].allclose(expected)) {
-      //   throw std::runtime_error("Bad result");
-      // }
-      at::Tensor closeness =
-          buckets_[bucketIdx].isclose(expected).logical_not();
-      at::Tensor nonCloseIndices = closeness.nonzero();
-      if (nonCloseIndices.size(0) > 0) {
-        LOG(ERROR) << "In bucket " << bucketIdx << " which starts at 0x"
-                   << std::hex
-                   << reinterpret_cast<uintptr_t>(
-                          buckets_[bucketIdx].data_ptr())
-                   << std::dec << " found non-close value at index "
-                   << nonCloseIndices[0].item<int64_t>() << " which has value "
-                   << buckets_[bucketIdx][nonCloseIndices[0].item<int64_t>()]
-                          .item<float>()
-                   << " instead of "
-                   << expected[nonCloseIndices[0].item<int64_t>()].item<float>()
-                   << " and there are " << nonCloseIndices.size(0)
-                   << " non-close values in total ";
+      if (!buckets_[bucketIdx].allclose(expected)) {
+        throw std::runtime_error("Bad result");
       }
+      // at::Tensor closeness =
+      //     buckets_[bucketIdx].isclose(expected).logical_not();
+      // at::Tensor nonCloseIndices = closeness.nonzero();
+      // if (nonCloseIndices.size(0) > 0) {
+      //   LOG(ERROR) << "In bucket " << bucketIdx << " which starts at 0x"
+      //              << std::hex
+      //              << reinterpret_cast<uintptr_t>(
+      //                     buckets_[bucketIdx].data_ptr())
+      //              << std::dec << " found non-close value at index "
+      //              << nonCloseIndices[0].item<int64_t>() << " which has value "
+      //              << buckets_[bucketIdx][nonCloseIndices[0].item<int64_t>()]
+      //                     .item<float>()
+      //              << " instead of "
+      //              << expected[nonCloseIndices[0].item<int64_t>()].item<float>()
+      //              << " and there are " << nonCloseIndices.size(0)
+      //              << " non-close values in total ";
+      // }
     }
   }
 };
@@ -223,7 +223,7 @@ PYBIND11_MODULE(benchmark_fairring, module) {
           size_t,
           const c10::intrusive_ptr<c10d::Store>&,
           bool,
-          std::optional<size_t>>(),
+          c10::optional<size_t>>(),
       py::arg("machine_idx"),
       py::arg("device_idx"),
       py::arg("num_machines"),

@@ -33,19 +33,9 @@ The Python version can be any of 3.6, 3.7, 3.8 or 3.9, and the CUDA version  any
 conda create -n fairring python=3.9 pip pytorch=1.11.0.dev20211112 cudatoolkit=11.1 -c pytorch-nightly -c nvidia -y
 conda activate fairring
 
-cd
-git clone --recurse-submodules https://github.com/pytorch/tensorpipe.git
-cd tensorpipe
-mkdir build
-cd build
-cmake ../ -GNinja -DTP_USE_CUDA=1 -DTP_BUILD_LIBUV=1 -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=0 -DCMAKE_PREFIX_PATH=$CONDA_PREFIX -DCMAKE_INSTALL_PREFIX=$CONDA_PREFIX '-DCMAKE_CXX_FLAGS=-D_GLIBCXX_USE_CXX11_ABI=0 -fPIC'
-ninja
-ninja install
-
-cd
 git clone --recurse-submodules https://github.com/facebookresearch/fairring.git
 cd herring
-CXX=g++-10 python setup.py install
+python setup.py install
 ```
 
 ## Usage

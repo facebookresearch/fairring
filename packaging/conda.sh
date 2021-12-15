@@ -20,7 +20,6 @@ fi
 
 export CUDA_HOME=/usr/local/cuda-${CUDA_MAJOR_VERSION}.${CUDA_MINOR_VERSION}
 export PATH="$CUDA_HOME/bin:$PATH"
-export SYSTEM_CXX=$(which g++)
 
 conda install -c defaults -c $CUDATOOLKIT_CHANNEL -c pytorch -c pytorch-nightly pytorch==$PYTORCH_VERSION cudatoolkit=${CUDA_MAJOR_VERSION}.${CUDA_MINOR_VERSION} --download-only --yes
 

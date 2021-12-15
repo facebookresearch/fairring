@@ -17,8 +17,6 @@
 #include <c10/cuda/CUDAStream.h>
 #include <cuda_runtime.h>
 #include <nccl.h>
-#include <tensorpipe/tensorpipe.h>
-#include <tensorpipe/tensorpipe_cuda.h>
 #include <torch/torch.h>
 
 #define DELETE_COPY_MOVE_CONSTRUCTORS(clsname) \
@@ -107,6 +105,17 @@ struct NcclCommDeleter {
 using NcclComm =
     std::unique_ptr<std::remove_pointer<ncclComm_t>::type, NcclCommDeleter>;
 
+inline NcclComm createOneNcclComm(
+    int rank,
+    c10::Device device,
+    int worldSize,
+    ncclUniqueId uniqueId) {
+  ncclComm_t rawComm;
+  c10::cuda::CUDAGuard g(device);
+  NCCL_CHECK(ncclCommInitRank(&rawComm, worldSize, uniqueId, rank));
+  return NcclComm(rawComm, NcclCommDeleter{});
+}
+
 inline std::vector<NcclComm> createManyNcclComms(
     int rankStart,
     const std::vector<c10::Device>& devices,
@@ -183,16 +192,6 @@ inline T byteStringToPod(const std::vector<uint8_t>& v) {
   T t;
   std::memcpy(&t, v.data(), sizeof(T));
   return t;
-}
-
-inline std::shared_ptr<tensorpipe::Context> createTpContext(std::string name) {
-  auto ctx = std::make_shared<tensorpipe::Context>(
-      tensorpipe::ContextOptions().name(std::move(name)));
-  ctx->registerTransport(0, "ibv", tensorpipe::transport::ibv::create());
-  ctx->registerChannel(0, "cuda_gdr", tensorpipe::channel::cuda_gdr::create());
-  ctx->registerChannel(1, "cuda_ipc", tensorpipe::channel::cuda_ipc::create());
-  ctx->registerChannel(2, "cuda_xth", tensorpipe::channel::cuda_xth::create());
-  return ctx;
 }
 
 inline ncclDataType_t torchToNcclDtype(c10::ScalarType dtype) {

@@ -18,7 +18,10 @@ jobs:
     resource_class: 2xlarge
     steps:
       - checkout
-      - run: packaging/conda.sh
+      - run:
+          name: Build conda package
+          no_output_timeout: 30m
+          command: packaging/conda.sh
 
 workflows:
   nightly:

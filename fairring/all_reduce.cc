@@ -43,7 +43,8 @@ AllReduceFairring::AllReduceFairring(
     int size,
     std::vector<c10::Device> devices,
     size_t maxMemoryAllocatedInBytes,
-    size_t sliceSizeInBytes)
+    size_t maxPaddingAllocatedInBytes,
+    size_t minParallelism)
     : devices_(std::move(devices)) {
   TORCH_CHECK(0 <= rank && rank < size);
   std::string machineId = getBootID().value();
@@ -159,7 +160,8 @@ AllReduceFairring::AllReduceFairring(
         std::move(diffuseComms[deviceOffset]),
         std::move(allGatherComms[deviceOffset]),
         maxMemoryAllocatedInBytes,
-        sliceSizeInBytes));
+        maxPaddingAllocatedInBytes,
+        minParallelism));
   }
 
   streams_.reserve(numDevices);

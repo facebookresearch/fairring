@@ -33,7 +33,8 @@ class DeviceFairring {
       NcclComm diffuseComm,
       NcclComm allGatherComm,
       size_t maxMemoryAllocatedInBytes,
-      size_t sliceSizeInBytes);
+      size_t maxPaddingAllocatedInBytes,
+      size_t minParallelism);
 
   ~DeviceFairring();
 
@@ -63,23 +64,19 @@ class DeviceFairring {
   CudaStream allGatherStream_;
 
   at::Tensor paddingBuffer_;
-  at::Tensor diffusedBuffer_;
-  at::Tensor collectedBuffer_;
-  at::Tensor reducedBuffer_;
+  std::vector<at::cuda::CUDAEvent> paddingEvents_;
+  size_t nextPaddingSlot_{0};
 
-  // To sync the "diffused" buffer across slots.
-  std::vector<at::cuda::CUDAEvent> allgatherToReduceScatterEvents_;
-  // To sync the "collected" buffer across slots.
-  std::vector<at::cuda::CUDAEvent> addToCollectEvents_;
-  // To sync the "reduced" buffer across slots.
-  std::vector<at::cuda::CUDAEvent> diffuseToAddEvents_;
+  at::Tensor stagingBuffer_;
+  at::Tensor paddingStagingBuffer_;
+  std::vector<at::cuda::CUDAEvent> stagingEvents_;
+  size_t nextStagingSlot_{0};
 
   CommandQueue cmdQueue_;
   std::thread cmdThread_;
   size_t nextSlot_{0};
 
   void processOneSlice(
-      size_t seqNum,
       at::Tensor slice,
       c10::optional<at::cuda::CUDAEvent> initialEvent);
 };

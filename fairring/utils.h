@@ -9,6 +9,7 @@
 #pragma once
 
 #include <future>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 
@@ -31,24 +32,44 @@
     std::terminate();                                   \
   }
 
-#define CUDA_CHECK(op)                                                    \
-  {                                                                       \
-    cudaError_t res = (op);                                               \
-    if (res != cudaSuccess) {                                             \
-      auto error_unused __attribute__((__unused__)) = cudaGetLastError(); \
-      LOG(ERROR) << "CUDA error: " << cudaGetErrorString(res);            \
-      throw std::runtime_error(                                           \
-          std::string("CUDA error: ") + cudaGetErrorString(res));         \
-    }                                                                     \
+#define CUDA_CHECK(op)                                                      \
+  {                                                                         \
+    cudaError_t res = (op);                                                 \
+    if (res != cudaSuccess) {                                               \
+      auto error_unused __attribute__((__unused__)) = cudaGetLastError();   \
+      LOG(ERROR) << "CUDA error at " << __FILE__ << ":" << __LINE__ << ": " \
+                 << cudaGetErrorString(res);                                \
+      throw std::runtime_error(                                             \
+          std::string("CUDA error: ") + cudaGetErrorString(res));           \
+    }                                                                       \
   }
 
-#define NCCL_CHECK(op)                        \
-  {                                           \
-    ncclResult_t res = (op);                  \
-    if (res != ncclSuccess) {                 \
-      LOG(ERROR) << "NCCL error";             \
-      throw std::runtime_error("NCCL error"); \
-    }                                         \
+std::string getNcclErrorString(ncclResult_t err) {
+  switch (err) {
+    case ncclSuccess:
+      return "success";
+    case ncclUnhandledCudaError:
+      return "unhandled CUDA error";
+    case ncclSystemError:
+      return "system error";
+    case ncclInternalError:
+      return "internal error";
+    case ncclInvalidArgument:
+      return "invalid argument";
+    case ncclInvalidUsage:
+      return "invalid usage";
+  }
+}
+
+#define NCCL_CHECK(op)                                                      \
+  {                                                                         \
+    ncclResult_t res = (op);                                                \
+    if (res != ncclSuccess) {                                               \
+      LOG(ERROR) << "NCCL error at " << __FILE__ << ":" << __LINE__ << ": " \
+                 << getNcclErrorString(res);                                \
+      throw std::runtime_error(                                             \
+          std::string("NCCL error: ") + getNcclErrorString(res));           \
+    }                                                                       \
   }
 
 namespace fairring {
@@ -220,17 +241,6 @@ inline ncclDataType_t torchToNcclDtype(c10::ScalarType dtype) {
   }
 }
 
-inline at::Tensor viewAsDtype(
-    at::Tensor byteTensor,
-    c10::ScalarType dtype,
-    size_t sizeInElems) {
-  MY_CHECK(byteTensor.scalar_type() == c10::kByte);
-  return torch::from_blob(
-      byteTensor.data_ptr(),
-      {static_cast<long>(sizeInElems)},
-      byteTensor.options().dtype(dtype));
-}
-
 template <typename T>
 inline constexpr T ceilOfRatio(T num, T den) {
   if (num == 0) {
@@ -254,96 +264,51 @@ inline constexpr T roundUpToNearestMultiple(T val, T factor) {
 // number of bytes, which is the size of doubles, the largest data type.
 static constexpr size_t kAlignment = 8;
 
-// The drivers of some InfiniBand cards appear to SEGFAULT when handling with
-// messages that are too small. (Our messages, over TensorPipe, are the shards).
-// Hence we enforce a minimum shard size, at the cost of sending garbage data
-// inside some of the shards.
-static constexpr size_t kMinShardSizeInBytes = 64;
-static_assert(kMinShardSizeInBytes % kAlignment == 0, "");
-
 struct Layout {
-  size_t shardSizeInBytes;
   size_t slotSizeInBytes;
   size_t sliceSizeInBytes;
-  size_t numSlots;
+  size_t numPaddingSlots;
+  size_t numStagingSlots;
 };
 
 inline Layout computeLayout(
     size_t maxMemoryAllocatedInBytes,
-    size_t sliceSizeInBytes,
+    size_t maxPaddingAllocatedInBytes,
+    size_t minParallelism,
     size_t numMachines,
     size_t numDevicesPerMachine) {
-  // Constraints:
-  // sliceSize == slotSize * numDevicesPerMachine
-  // slotSize <= shardSize * numMachines
-  // shardSize % kAlignment == 0
+  size_t onePaddingSizeInBytes =
+      numDevicesPerMachine * numMachines * kAlignment;
+  size_t numPaddingSlots = maxPaddingAllocatedInBytes / onePaddingSizeInBytes;
+  MY_CHECK(minParallelism <= numPaddingSlots);
 
-  // Memory usage:
-  // - The server uses:
-  //   * numMachines * shardSize bytes into which it stages incoming requests
-  //   * shardSize bytes into which it aggregates the stages data before sending
-  // - The client uses:
-  //   * slotSize into which it puts the result of reduceScatter before sending,
-  //     and the incoming responses before calling allGather
-  //   * numDevicesPerMachine * kAlignment as temporary storage used to pad the
-  //     excess data that cannot be handled by reduceScatter
-  // All of the above are repeated for each slot.
-
-  // We could "fix" this by tweaking the sliceSize, but it's probably not good:
-  // - if we decrease it, and the user passes in tensors of that size, we'd end
-  //   up slicing each tensor into two (with the second half being tiny) while
-  //   the user believe they have a perfect 1:1 correspondence
-  // - if we increase it, and the user passes in tensors of that size, it means
-  //   we need to add some padding to each tensor we handle, which is a more
-  //   inefficient path.
-  MY_CHECK(sliceSizeInBytes % (kAlignment * numDevicesPerMachine) == 0);
-
-  size_t slotSizeInBytes = sliceSizeInBytes / numDevicesPerMachine;
-  size_t shardSizeInBytes = roundUpToNearestMultiple(
-      ceilOfRatio(slotSizeInBytes, numMachines), kAlignment);
-  size_t totalMemoryNeededPerSlot =
-      ((2 * numMachines + 1) * shardSizeInBytes +
-       numDevicesPerMachine * kAlignment);
-  size_t numSlots = maxMemoryAllocatedInBytes / totalMemoryNeededPerSlot;
-
-  MY_CHECK(shardSizeInBytes >= kMinShardSizeInBytes);
-  MY_CHECK(slotSizeInBytes >= kMinShardSizeInBytes * numMachines);
+  size_t sliceSizeInBytes = std::numeric_limits<size_t>::max();
+  size_t slotSizeInBytes = 0;
+  size_t numStagingSlots = 0;
+  if (numDevicesPerMachine == 1) {
+    size_t paddingMemoryInBytes =
+        2 * minParallelism * numDevicesPerMachine * numMachines * kAlignment;
+    MY_CHECK(paddingMemoryInBytes <= maxMemoryAllocatedInBytes);
+    slotSizeInBytes = roundDownToNearestMultiple(
+        (maxMemoryAllocatedInBytes - paddingMemoryInBytes) / minParallelism,
+        numDevicesPerMachine * numMachines * kAlignment);
+    sliceSizeInBytes = slotSizeInBytes * numDevicesPerMachine;
+    numStagingSlots = minParallelism;
+    numPaddingSlots = minParallelism;
+  }
 
   LOG(WARNING) << "The Fairring process group will achieve a parallelism of "
-               << numSlots;
+               << numPaddingSlots << " and its slice size is "
+               << (sliceSizeInBytes == std::numeric_limits<size_t>::max()
+                       ? "infinity"
+                       : std::to_string(sliceSizeInBytes));
 
   return Layout{
-      .shardSizeInBytes = shardSizeInBytes,
       .slotSizeInBytes = slotSizeInBytes,
       .sliceSizeInBytes = sliceSizeInBytes,
-      .numSlots = numSlots,
+      .numPaddingSlots = numPaddingSlots,
+      .numStagingSlots = numStagingSlots,
   };
-}
-
-// Could be constexpr, if it weren't for
-// https://gcc.gnu.org/bugzilla/show_bug.cgi?id=102878
-inline size_t getShardOffsetInBytes(
-    size_t machineIdx,
-    size_t numMachines,
-    size_t slotSizeInElems,
-    size_t elementSizeInBytes) {
-  MY_CHECK(kAlignment % elementSizeInBytes == 0);
-  return std::max(
-      machineIdx * kMinShardSizeInBytes,
-      machineIdx * slotSizeInElems / numMachines * elementSizeInBytes);
-}
-
-// Could be constexpr, if it weren't for
-// https://gcc.gnu.org/bugzilla/show_bug.cgi?id=102878
-inline size_t getShardSizeInBytes(
-    size_t machineIdx,
-    size_t numMachines,
-    size_t slotSizeInElems,
-    size_t elementSizeInBytes) {
-  return getShardOffsetInBytes(
-             machineIdx + 1, numMachines, slotSizeInElems, elementSizeInBytes) -
-      getShardOffsetInBytes(
-             machineIdx, numMachines, slotSizeInElems, elementSizeInBytes);
 }
 
 class CommandQueue {

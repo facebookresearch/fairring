@@ -53,7 +53,8 @@ DeviceFairring::DeviceFairring(
     NcclComm diffuseComm,
     NcclComm allGatherComm,
     size_t maxMemoryAllocatedInBytes,
-    size_t sliceSizeInBytes)
+    size_t maxPaddingAllocatedInBytes,
+    size_t minParallelism)
     : // Arguments
       myDeviceIdxOnProcess_(deviceIdxOnProcess),
       myMachineIdx_(machineIdx),
@@ -67,7 +68,8 @@ DeviceFairring::DeviceFairring(
       allGatherComm_(std::move(allGatherComm)),
       layout_(computeLayout(
           maxMemoryAllocatedInBytes,
-          sliceSizeInBytes,
+          maxPaddingAllocatedInBytes,
+          minParallelism,
           numMachines_,
           numDevicesPerMachine_)),
       // Streams
@@ -78,35 +80,30 @@ DeviceFairring::DeviceFairring(
       allGatherStream_(CudaStream(myDeviceIdxOnProcess_)),
       // Buffers
       paddingBuffer_(at::empty(
-          {static_cast<long>(layout_.numSlots),
+          {static_cast<long>(layout_.numPaddingSlots),
            static_cast<long>(numDevicesPerMachine_),
+           static_cast<long>(numMachines_),
            static_cast<long>(kAlignment)},
           c10::TensorOptions()
               .dtype(c10::kByte)
               .device(c10::Device(c10::kCUDA, myDeviceIdxOnProcess_)))),
-      diffusedBuffer_(at::empty(
-          {static_cast<long>(layout_.numSlots),
+      stagingBuffer_(at::empty(
+          {static_cast<long>(layout_.numStagingSlots),
+           static_cast<long>(numMachines_),
            static_cast<long>(layout_.slotSizeInBytes)},
           c10::TensorOptions()
               .dtype(c10::kByte)
               .device(c10::Device(c10::kCUDA, myDeviceIdxOnProcess_)))),
-      collectedBuffer_(at::empty(
-          {static_cast<long>(layout_.numSlots),
+      paddingStagingBuffer_(at::empty(
+          {static_cast<long>(layout_.numStagingSlots),
            static_cast<long>(numMachines_),
-           static_cast<long>(layout_.shardSizeInBytes)},
-          c10::TensorOptions()
-              .dtype(c10::kByte)
-              .device(c10::Device(c10::kCUDA, myDeviceIdxOnProcess_)))),
-      reducedBuffer_(at::empty(
-          {static_cast<long>(layout_.numSlots),
-           static_cast<long>(layout_.shardSizeInBytes)},
+           static_cast<long>(kAlignment)},
           c10::TensorOptions()
               .dtype(c10::kByte)
               .device(c10::Device(c10::kCUDA, myDeviceIdxOnProcess_)))),
       // Events
-      allgatherToReduceScatterEvents_(makeManyCudaEvents(layout_.numSlots)),
-      addToCollectEvents_(makeManyCudaEvents(layout_.numSlots)),
-      diffuseToAddEvents_(makeManyCudaEvents(layout_.numSlots)) {
+      paddingEvents_(makeManyCudaEvents(layout_.numPaddingSlots)),
+      stagingEvents_(makeManyCudaEvents(layout_.numStagingSlots)) {
   cmdThread_ = std::thread([this]() {
     while (true) {
       std::function<void()> fn = cmdQueue_.dequeue();
@@ -157,7 +154,6 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::allReduce(
           : c10::intrusive_ptr<c10::ivalue::Future>();
       try {
         processOneSlice(
-            seqNum,
             std::move(slice),
             sliceIdx == 0
                 ? c10::optional<at::cuda::CUDAEvent>(std::move(*initialEvent))
@@ -181,183 +177,259 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::allReduce(
 }
 
 void DeviceFairring::processOneSlice(
-    size_t seqNum,
     at::Tensor slice,
     c10::optional<at::cuda::CUDAEvent> initialEvent) {
   c10::cuda::CUDAGuard g(myDeviceIdxOnProcess_);
 
-  size_t slotIdx = seqNum % layout_.numSlots;
-  size_t sliceSizeInElems = slice.numel();
   c10::ScalarType dtype = slice.scalar_type();
-  size_t baseSlotSizeInElems = sliceSizeInElems / numDevicesPerMachine_;
-  size_t fullSlotSizeInElems =
-      ceilOfRatio(sliceSizeInElems, numDevicesPerMachine_);
-  bool sliceNotMultipleOfSlot = sliceSizeInElems % numDevicesPerMachine_ > 0;
   size_t elementSizeInBytes = slice.element_size();
-  size_t myShardSizeInBytes = getShardSizeInBytes(
-      myMachineIdx_, numMachines_, fullSlotSizeInElems, elementSizeInBytes);
-  size_t myShardSizeInElems = myShardSizeInBytes / elementSizeInBytes;
 
   at::cuda::CUDAEvent reduceScatterToCollectEvent;
   at::cuda::CUDAEvent collectToAddEvent;
   at::cuda::CUDAEvent addToDiffuseEvent;
   at::cuda::CUDAEvent diffuseToAllGatherEvent;
 
+  at::Tensor slice3d;
+  c10::optional<at::Tensor> padding;
+  at::cuda::CUDAEvent* paddingEvent = nullptr;
+  if (slice.numel() % (numDevicesPerMachine_ * numMachines_) == 0) {
+    slice3d = slice.view({numDevicesPerMachine_, numMachines_, -1});
+  } else {
+    size_t sliceSizeInElems = roundDownToNearestMultiple(
+        static_cast<size_t>(slice.numel()),
+        numDevicesPerMachine_ * numMachines_);
+    slice3d = slice.index({torch::indexing::Slice(0, sliceSizeInElems)})
+                  .view({numDevicesPerMachine_, numMachines_, -1});
+    size_t paddingSlotIdx = (nextPaddingSlot_++) % layout_.numPaddingSlots;
+    padding = paddingBuffer_[paddingSlotIdx]
+                  .view(dtype)
+                  .flatten()
+                  .index({torch::indexing::Slice(
+                      0, numDevicesPerMachine_ * numMachines_)})
+                  .view({numDevicesPerMachine_, numMachines_});
+    paddingEvent = &paddingEvents_[paddingSlotIdx];
+  }
+
+  at::Tensor slice3dStaging;
+  c10::optional<at::Tensor> paddingStaging;
+  at::cuda::CUDAEvent* stagingEvent = nullptr;
+  if (numDevicesPerMachine_ == 1) {
+    size_t stagingSlotIdx = (nextStagingSlot_++) % layout_.numStagingSlots;
+    slice3dStaging = stagingBuffer_[stagingSlotIdx]
+                         .view(dtype)
+                         .flatten()
+                         .index({torch::indexing::Slice(
+                             0, slice3d[myDeviceIdxOnMachine_].numel())})
+                         .view({numMachines_, -1});
+    if (padding) {
+      paddingStaging = paddingStagingBuffer_[stagingSlotIdx]
+                           .view(dtype)
+                           .flatten()
+                           .index({torch::indexing::Slice(
+                               0, (*padding)[myDeviceIdxOnMachine_].numel())})
+                           .view({numMachines_});
+    }
+    stagingEvent = &stagingEvents_[stagingSlotIdx];
+  } else {
+    slice3dStaging =
+        slice3d[(myDeviceIdxOnMachine_ + 1) % numDevicesPerMachine_];
+    if (padding) {
+      paddingStaging =
+          (*padding)[(myDeviceIdxOnMachine_ + 1) % numDevicesPerMachine_];
+    }
+  }
+
   if (initialEvent.has_value()) {
     initialEvent.value().block(reduceScatterStream_);
   }
-  allgatherToReduceScatterEvents_[slotIdx].block(reduceScatterStream_);
-  NCCL_CHECK(ncclReduceScatter(
-      slice.data_ptr(),
-      diffusedBuffer_[slotIdx].data_ptr(),
-      baseSlotSizeInElems,
-      torchToNcclDtype(dtype),
-      ncclSum,
-      reduceScatterComm_.get(),
-      reduceScatterStream_));
-  if (sliceNotMultipleOfSlot) {
+
+  if (padding) {
+    (*paddingEvent).block(reduceScatterStream_);
     // No need to zero out the padding: we don't care what value it has/gets.
     CUDA_CHECK(cudaMemcpyAsync(
-        paddingBuffer_[slotIdx].data_ptr(),
+        (*padding).data_ptr(),
         reinterpret_cast<uint8_t*>(slice.data_ptr()) +
-            baseSlotSizeInElems * numDevicesPerMachine_ * elementSizeInBytes,
-        (sliceSizeInElems % numDevicesPerMachine_) * elementSizeInBytes,
+            slice3d.numel() * elementSizeInBytes,
+        (slice.numel() % slice3d.numel()) * elementSizeInBytes,
         cudaMemcpyDeviceToDevice,
         reduceScatterStream_));
+  }
+
+  if (numDevicesPerMachine_ > 1) {
+    NCCL_CHECK(ncclGroupStart());
     NCCL_CHECK(ncclReduceScatter(
-        paddingBuffer_[slotIdx].data_ptr(),
-        reinterpret_cast<uint8_t*>(diffusedBuffer_[slotIdx].data_ptr()) +
-            baseSlotSizeInElems * elementSizeInBytes,
-        1,
+        slice3d.data_ptr(),
+        slice3d[myDeviceIdxOnMachine_].data_ptr(),
+        slice3d[myDeviceIdxOnMachine_].numel(),
         torchToNcclDtype(dtype),
         ncclSum,
         reduceScatterComm_.get(),
         reduceScatterStream_));
+    if (padding) {
+      NCCL_CHECK(ncclReduceScatter(
+          (*padding).data_ptr(),
+          (*padding)[myDeviceIdxOnMachine_].data_ptr(),
+          (*padding)[myDeviceIdxOnMachine_].numel(),
+          torchToNcclDtype(dtype),
+          ncclSum,
+          reduceScatterComm_.get(),
+          reduceScatterStream_));
+    }
+    NCCL_CHECK(ncclGroupEnd());
   }
   reduceScatterToCollectEvent.record(reduceScatterStream_);
 
+  if (stagingEvent) {
+    (*stagingEvent).block(collectStream_);
+  }
+
   reduceScatterToCollectEvent.block(collectStream_);
-  addToCollectEvents_[slotIdx].block(collectStream_);
-  NCCL_CHECK(ncclGroupStart());
-  for (const auto serverMachineIdx : c10::irange(numMachines_)) {
-    void* slicePtr =
-        reinterpret_cast<uint8_t*>(diffusedBuffer_[slotIdx].data_ptr()) +
-        getShardOffsetInBytes(
+  if (numMachines_ > 1) {
+    NCCL_CHECK(ncclGroupStart());
+    for (const auto serverMachineIdx : c10::irange(numMachines_)) {
+      NCCL_CHECK(ncclSend(
+          slice3d[myDeviceIdxOnMachine_][serverMachineIdx].data_ptr(),
+          slice3d[myDeviceIdxOnMachine_][serverMachineIdx].numel(),
+          torchToNcclDtype(dtype),
+          serverMachineIdx,
+          collectComm_.get(),
+          collectStream_));
+    }
+    for (const auto clientMachineIdx : c10::irange(numMachines_)) {
+      NCCL_CHECK(ncclRecv(
+          slice3dStaging[clientMachineIdx].data_ptr(),
+          slice3dStaging[clientMachineIdx].numel(),
+          torchToNcclDtype(dtype),
+          clientMachineIdx,
+          collectComm_.get(),
+          collectStream_));
+    }
+    if (padding) {
+      for (const auto serverMachineIdx : c10::irange(numMachines_)) {
+        NCCL_CHECK(ncclSend(
+            (*padding)[myDeviceIdxOnMachine_][serverMachineIdx].data_ptr(),
+            (*padding)[myDeviceIdxOnMachine_][serverMachineIdx].numel(),
+            torchToNcclDtype(dtype),
             serverMachineIdx,
-            numMachines_,
-            fullSlotSizeInElems,
-            elementSizeInBytes);
-    size_t sliceSizeInBytes = getShardSizeInBytes(
-        serverMachineIdx,
-        numMachines_,
-        fullSlotSizeInElems,
-        elementSizeInBytes);
-    NCCL_CHECK(ncclSend(
-        slicePtr,
-        sliceSizeInBytes / elementSizeInBytes,
-        torchToNcclDtype(dtype),
-        serverMachineIdx,
-        collectComm_.get(),
-        collectStream_));
+            collectComm_.get(),
+            collectStream_));
+      }
+      for (const auto clientMachineIdx : c10::irange(numMachines_)) {
+        NCCL_CHECK(ncclRecv(
+            (*paddingStaging)[clientMachineIdx].data_ptr(),
+            (*paddingStaging)[clientMachineIdx].numel(),
+            torchToNcclDtype(dtype),
+            clientMachineIdx,
+            collectComm_.get(),
+            collectStream_));
+      }
+    }
+    NCCL_CHECK(ncclGroupEnd());
   }
-  for (const auto clientMachineIdx : c10::irange(numMachines_)) {
-    void* slicePtr = collectedBuffer_
-                         .index(
-                             {static_cast<long>(slotIdx),
-                              static_cast<long>(clientMachineIdx)})
-                         .data_ptr();
-    NCCL_CHECK(ncclRecv(
-        slicePtr,
-        myShardSizeInElems,
-        torchToNcclDtype(dtype),
-        clientMachineIdx,
-        collectComm_.get(),
-        collectStream_));
-  }
-  NCCL_CHECK(ncclGroupEnd());
   collectToAddEvent.record(collectStream_);
 
   collectToAddEvent.block(addStream_);
-  diffuseToAddEvents_[slotIdx].block(addStream_);
-  {
+  if (numMachines_ > 1) {
     c10::cuda::CUDAStreamGuard g(addStream_);
     // sum_out wants its first argument to be an lvalue (for no good reason)
-    auto out = reducedBuffer_.view(dtype).index(
-        {static_cast<long>(slotIdx),
-         torch::indexing::Slice(0, myShardSizeInElems)});
-    at::sum_out(
-        out,
-        collectedBuffer_.view(dtype).index(
-            {static_cast<long>(slotIdx),
-             torch::indexing::Slice(),
-             torch::indexing::Slice(0, myShardSizeInElems)}),
-        {0});
+    auto out = slice3d[myDeviceIdxOnMachine_][myMachineIdx_];
+    at::sum_out(out, slice3dStaging, {0});
+    if (padding) {
+      auto paddingOut = (*padding)[myDeviceIdxOnMachine_][myMachineIdx_];
+      at::sum_out(paddingOut, (*paddingStaging), {0});
+    }
   }
-  addToCollectEvents_[slotIdx].record(addStream_);
   addToDiffuseEvent.record(addStream_);
 
+  if (stagingEvent) {
+    (*stagingEvent).record(addStream_);
+  }
+
   addToDiffuseEvent.block(diffuseStream_);
-  NCCL_CHECK(ncclGroupStart());
-  for (const auto clientMachineIdx : c10::irange(numMachines_)) {
-    NCCL_CHECK(ncclSend(
-        reducedBuffer_[slotIdx].data_ptr(),
-        myShardSizeInElems,
-        torchToNcclDtype(dtype),
-        clientMachineIdx,
-        diffuseComm_.get(),
-        diffuseStream_));
-  }
-  for (const auto serverMachineIdx : c10::irange(numMachines_)) {
-    void* slicePtr =
-        reinterpret_cast<uint8_t*>(diffusedBuffer_[slotIdx].data_ptr()) +
-        getShardOffsetInBytes(
+  if (numMachines_ > 1) {
+    NCCL_CHECK(ncclGroupStart());
+    for (const auto clientMachineIdx : c10::irange(numMachines_)) {
+      if (clientMachineIdx != myMachineIdx_) {
+        NCCL_CHECK(ncclSend(
+            slice3d[myDeviceIdxOnMachine_][myMachineIdx_].data_ptr(),
+            slice3d[myDeviceIdxOnMachine_][myMachineIdx_].numel(),
+            torchToNcclDtype(dtype),
+            clientMachineIdx,
+            diffuseComm_.get(),
+            diffuseStream_));
+      }
+    }
+    for (const auto serverMachineIdx : c10::irange(numMachines_)) {
+      if (serverMachineIdx != myMachineIdx_) {
+        NCCL_CHECK(ncclRecv(
+            slice3d[myDeviceIdxOnMachine_][serverMachineIdx].data_ptr(),
+            slice3d[myDeviceIdxOnMachine_][serverMachineIdx].numel(),
+            torchToNcclDtype(dtype),
             serverMachineIdx,
-            numMachines_,
-            fullSlotSizeInElems,
-            elementSizeInBytes);
-    size_t sliceSizeInBytes = getShardSizeInBytes(
-        serverMachineIdx,
-        numMachines_,
-        fullSlotSizeInElems,
-        elementSizeInBytes);
-    NCCL_CHECK(ncclRecv(
-        slicePtr,
-        sliceSizeInBytes / elementSizeInBytes,
-        torchToNcclDtype(dtype),
-        serverMachineIdx,
-        diffuseComm_.get(),
-        diffuseStream_));
+            diffuseComm_.get(),
+            diffuseStream_));
+      }
+    }
+    if (padding) {
+      for (const auto clientMachineIdx : c10::irange(numMachines_)) {
+        if (clientMachineIdx != myMachineIdx_) {
+          NCCL_CHECK(ncclSend(
+              (*padding)[myDeviceIdxOnMachine_][myMachineIdx_].data_ptr(),
+              (*padding)[myDeviceIdxOnMachine_][myMachineIdx_].numel(),
+              torchToNcclDtype(dtype),
+              clientMachineIdx,
+              diffuseComm_.get(),
+              diffuseStream_));
+        }
+      }
+      for (const auto serverMachineIdx : c10::irange(numMachines_)) {
+        if (serverMachineIdx != myMachineIdx_) {
+          NCCL_CHECK(ncclRecv(
+              (*padding)[myDeviceIdxOnMachine_][serverMachineIdx].data_ptr(),
+              (*padding)[myDeviceIdxOnMachine_][serverMachineIdx].numel(),
+              torchToNcclDtype(dtype),
+              serverMachineIdx,
+              diffuseComm_.get(),
+              diffuseStream_));
+        }
+      }
+    }
+    NCCL_CHECK(ncclGroupEnd());
   }
-  NCCL_CHECK(ncclGroupEnd());
-  diffuseToAddEvents_[slotIdx].record(diffuseStream_);
   diffuseToAllGatherEvent.record(diffuseStream_);
 
   diffuseToAllGatherEvent.block(allGatherStream_);
-  NCCL_CHECK(ncclAllGather(
-      diffusedBuffer_[slotIdx].data_ptr(),
-      slice.data_ptr(),
-      baseSlotSizeInElems,
-      torchToNcclDtype(dtype),
-      allGatherComm_.get(),
-      allGatherStream_));
-  if (sliceNotMultipleOfSlot) {
+  if (numDevicesPerMachine_ > 1) {
+    NCCL_CHECK(ncclGroupStart());
     NCCL_CHECK(ncclAllGather(
-        reinterpret_cast<uint8_t*>(diffusedBuffer_[slotIdx].data_ptr()) +
-            baseSlotSizeInElems * elementSizeInBytes,
-        paddingBuffer_[slotIdx].data_ptr(),
-        1,
+        slice3d[myDeviceIdxOnMachine_].data_ptr(),
+        slice3d.data_ptr(),
+        slice3d[myDeviceIdxOnMachine_].numel(),
         torchToNcclDtype(dtype),
         allGatherComm_.get(),
         allGatherStream_));
+    if (padding) {
+      NCCL_CHECK(ncclAllGather(
+          (*padding)[myDeviceIdxOnMachine_].data_ptr(),
+          (*padding).data_ptr(),
+          (*padding)[myDeviceIdxOnMachine_].numel(),
+          torchToNcclDtype(dtype),
+          allGatherComm_.get(),
+          allGatherStream_));
+    }
+    NCCL_CHECK(ncclGroupEnd());
+  }
+
+  if (padding) {
     CUDA_CHECK(cudaMemcpyAsync(
         reinterpret_cast<uint8_t*>(slice.data_ptr()) +
-            baseSlotSizeInElems * numDevicesPerMachine_ * elementSizeInBytes,
-        paddingBuffer_[slotIdx].data_ptr(),
-        (sliceSizeInElems % numDevicesPerMachine_) * elementSizeInBytes,
+            slice3d.numel() * elementSizeInBytes,
+        (*padding).data_ptr(),
+        (slice.numel() % slice3d.numel()) * elementSizeInBytes,
         cudaMemcpyDeviceToDevice,
         allGatherStream_));
+    (*paddingEvent).block(reduceScatterStream_);
   }
-  allgatherToReduceScatterEvents_[slotIdx].record(allGatherStream_);
 }
 
 } // namespace fairring

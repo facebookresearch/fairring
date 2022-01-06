@@ -76,12 +76,14 @@ c10::intrusive_ptr<c10::ivalue::Future> ProcessGroupFairring::WorkFairring::
 
 ProcessGroupFairring::OptionsFairring::OptionsFairring(
     size_t maxMemoryAllocatedInBytes,
-    size_t sliceSizeInBytes,
+    size_t maxPaddingAllocatedInBytes,
+    size_t minParallelism,
     bool isHighPriorityStream,
     std::chrono::milliseconds timeout)
     : c10d::ProcessGroup::Options(kPgName, timeout),
       maxMemoryAllocatedInBytes_(maxMemoryAllocatedInBytes),
-      sliceSizeInBytes_(sliceSizeInBytes),
+      maxPaddingAllocatedInBytes_(maxPaddingAllocatedInBytes),
+      minParallelism_(minParallelism),
       isHighPriorityStream_(isHighPriorityStream) {}
 
 ProcessGroupFairring::OptionsFairring::~OptionsFairring() {}
@@ -89,12 +91,14 @@ ProcessGroupFairring::OptionsFairring::~OptionsFairring() {}
 c10::intrusive_ptr<ProcessGroupFairring::OptionsFairring> ProcessGroupFairring::
     OptionsFairring::create(
         size_t maxMemoryAllocatedInBytes,
-        size_t sliceSizeInBytes,
+        size_t maxPaddingAllocatedInBytes,
+        size_t minParallelism,
         bool isHighPriorityStream,
         std::chrono::milliseconds timeout) {
   return c10::make_intrusive<ProcessGroupFairring::OptionsFairring>(
       maxMemoryAllocatedInBytes,
-      sliceSizeInBytes,
+      maxPaddingAllocatedInBytes,
+      minParallelism,
       isHighPriorityStream,
       timeout);
 }
@@ -112,7 +116,8 @@ ProcessGroupFairring::ProcessGroupFairring(
           c10d::ProcessGroupNCCL::Options::create(
               options->isHighPriorityStream_))),
       maxMemoryAllocatedInBytes_(options->maxMemoryAllocatedInBytes_),
-      sliceSizeInBytes_(options->sliceSizeInBytes_),
+      maxPaddingAllocatedInBytes_(options->maxPaddingAllocatedInBytes_),
+      minParallelism_(options->minParallelism_),
       store_(c10::make_intrusive<c10d::PrefixStore>("fairring", store)) {}
 
 ProcessGroupFairring::~ProcessGroupFairring() {}
@@ -150,7 +155,8 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::allreduce(
         size_,
         std::move(devices),
         maxMemoryAllocatedInBytes_,
-        sliceSizeInBytes_);
+        maxPaddingAllocatedInBytes_,
+        minParallelism_);
   }
   return c10::make_intrusive<WorkFairring>(
       c10d::OpType::ALLREDUCE, allReduce_->allReduce(opts.reduceOp, data));

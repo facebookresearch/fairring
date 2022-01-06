@@ -30,7 +30,8 @@ class AllReduceFairring {
       int size,
       std::vector<c10::Device> devices,
       size_t maxMemoryAllocatedInBytes,
-      size_t sliceSizeInBytes);
+      size_t maxPaddingAllocatedInBytes,
+      size_t minParallelism);
 
   ~AllReduceFairring();
 

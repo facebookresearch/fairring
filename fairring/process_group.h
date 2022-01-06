@@ -53,7 +53,8 @@ class ProcessGroupFairring : public c10d::ProcessGroup {
    public:
     explicit OptionsFairring(
         size_t maxMemoryAllocatedInBytes,
-        size_t sliceSizeInBytes,
+        size_t maxPaddingAllocatedInBytes,
+        size_t minParallelism,
         bool isHighPriorityStream = false,
         std::chrono::milliseconds timeout = kProcessGroupDefaultTimeout);
 
@@ -61,13 +62,15 @@ class ProcessGroupFairring : public c10d::ProcessGroup {
 
     static c10::intrusive_ptr<OptionsFairring> create(
         size_t maxMemoryAllocatedInBytes,
-        size_t sliceSizeInBytes,
+        size_t maxPaddingAllocatedInBytes,
+        size_t minParallelism,
         bool isHighPriorityStream = false,
         std::chrono::milliseconds timeout = kProcessGroupDefaultTimeout);
 
    private:
     const size_t maxMemoryAllocatedInBytes_;
-    const size_t sliceSizeInBytes_;
+    const size_t maxPaddingAllocatedInBytes_;
+    const size_t minParallelism_;
     const bool isHighPriorityStream_;
 
     friend ProcessGroupFairring;
@@ -174,7 +177,8 @@ class ProcessGroupFairring : public c10d::ProcessGroup {
   c10::intrusive_ptr<c10d::ProcessGroupNCCL> ncclPG_;
 
   size_t maxMemoryAllocatedInBytes_;
-  size_t sliceSizeInBytes_;
+  size_t maxPaddingAllocatedInBytes_;
+  size_t minParallelism_;
   c10::intrusive_ptr<c10d::Store> store_;
   std::unique_ptr<AllReduceFairring> allReduce_;
 };

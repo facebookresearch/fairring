@@ -44,7 +44,7 @@
     }                                                                       \
   }
 
-std::string getNcclErrorString(ncclResult_t err) {
+inline std::string getNcclErrorString(ncclResult_t err) {
   switch (err) {
     case ncclSuccess:
       return "success";
@@ -298,9 +298,10 @@ inline Layout computeLayout(
   }
 
   LOG(WARNING) << "The Fairring process group will achieve a parallelism of "
-               << numPaddingSlots << " and its slice size is "
+               << numPaddingSlots << (numStagingSlots == 0 ? "+" : "")
+               << " and its slice size is "
                << (sliceSizeInBytes == std::numeric_limits<size_t>::max()
-                       ? "infinity"
+                       ? "infinite"
                        : std::to_string(sliceSizeInBytes));
 
   return Layout{

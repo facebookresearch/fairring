@@ -58,7 +58,10 @@ inline std::string getNcclErrorString(ncclResult_t err) {
       return "invalid argument";
     case ncclInvalidUsage:
       return "invalid usage";
+    case ncclNumResults:
+      break;
   }
+  return "unknown error type";
 }
 
 #define NCCL_CHECK(op)                                                      \

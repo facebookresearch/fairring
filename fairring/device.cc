@@ -78,7 +78,7 @@ DeviceFairring::DeviceFairring(
       addStream_(CudaStream(myDeviceIdxOnProcess_)),
       diffuseStream_(CudaStream(myDeviceIdxOnProcess_)),
       allGatherStream_(CudaStream(myDeviceIdxOnProcess_)),
-      // Buffers
+      // Padding
       paddingBuffer_(at::empty(
           {static_cast<long>(layout_.numPaddingSlots),
            static_cast<long>(numDevicesPerMachine_),
@@ -87,6 +87,8 @@ DeviceFairring::DeviceFairring(
           c10::TensorOptions()
               .dtype(c10::kByte)
               .device(c10::Device(c10::kCUDA, myDeviceIdxOnProcess_)))),
+      paddingEvents_(makeManyCudaEvents(layout_.numPaddingSlots)),
+      // Staging
       stagingBuffer_(at::empty(
           {static_cast<long>(layout_.numStagingSlots),
            static_cast<long>(numMachines_),
@@ -101,8 +103,6 @@ DeviceFairring::DeviceFairring(
           c10::TensorOptions()
               .dtype(c10::kByte)
               .device(c10::Device(c10::kCUDA, myDeviceIdxOnProcess_)))),
-      // Events
-      paddingEvents_(makeManyCudaEvents(layout_.numPaddingSlots)),
       stagingEvents_(makeManyCudaEvents(layout_.numStagingSlots)) {
   cmdThread_ = std::thread([this]() {
     while (true) {
@@ -193,20 +193,28 @@ void DeviceFairring::processOneSlice(
   c10::optional<at::Tensor> padding;
   at::cuda::CUDAEvent* paddingEvent = nullptr;
   if (slice.numel() % (numDevicesPerMachine_ * numMachines_) == 0) {
-    slice3d = slice.view({numDevicesPerMachine_, numMachines_, -1});
+    slice3d = slice.view(
+        {static_cast<long>(numDevicesPerMachine_),
+         static_cast<long>(numMachines_),
+         -1});
   } else {
     size_t sliceSizeInElems = roundDownToNearestMultiple(
         static_cast<size_t>(slice.numel()),
         numDevicesPerMachine_ * numMachines_);
     slice3d = slice.index({torch::indexing::Slice(0, sliceSizeInElems)})
-                  .view({numDevicesPerMachine_, numMachines_, -1});
+                  .view(
+                      {static_cast<long>(numDevicesPerMachine_),
+                       static_cast<long>(numMachines_),
+                       -1});
     size_t paddingSlotIdx = (nextPaddingSlot_++) % layout_.numPaddingSlots;
     padding = paddingBuffer_[paddingSlotIdx]
                   .view(dtype)
                   .flatten()
                   .index({torch::indexing::Slice(
                       0, numDevicesPerMachine_ * numMachines_)})
-                  .view({numDevicesPerMachine_, numMachines_});
+                  .view(
+                      {static_cast<long>(numDevicesPerMachine_),
+                       static_cast<long>(numMachines_)});
     paddingEvent = &paddingEvents_[paddingSlotIdx];
   }
 
@@ -220,14 +228,14 @@ void DeviceFairring::processOneSlice(
                          .flatten()
                          .index({torch::indexing::Slice(
                              0, slice3d[myDeviceIdxOnMachine_].numel())})
-                         .view({numMachines_, -1});
+                         .view({static_cast<long>(numMachines_), -1});
     if (padding) {
       paddingStaging = paddingStagingBuffer_[stagingSlotIdx]
                            .view(dtype)
                            .flatten()
                            .index({torch::indexing::Slice(
                                0, (*padding)[myDeviceIdxOnMachine_].numel())})
-                           .view({numMachines_});
+                           .view({static_cast<long>(numMachines_)});
     }
     stagingEvent = &stagingEvents_[stagingSlotIdx];
   } else {

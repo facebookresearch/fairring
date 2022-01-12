@@ -258,21 +258,23 @@ void DeviceFairring::processOneSlice(
         (*padding).data_ptr(),
         reinterpret_cast<uint8_t*>(slice.data_ptr()) +
             slice3d.numel() * elementSizeInBytes,
-        (slice.numel() % slice3d.numel()) * elementSizeInBytes,
+        (slice.numel() - slice3d.numel()) * elementSizeInBytes,
         cudaMemcpyDeviceToDevice,
         reduceScatterStream_));
   }
 
   if (numDevicesPerMachine_ > 1) {
     NCCL_CHECK(ncclGroupStart());
-    NCCL_CHECK(ncclReduceScatter(
-        slice3d.data_ptr(),
-        slice3d[myDeviceIdxOnMachine_].data_ptr(),
-        slice3d[myDeviceIdxOnMachine_].numel(),
-        torchToNcclDtype(dtype),
-        ncclSum,
-        reduceScatterComm_.get(),
-        reduceScatterStream_));
+    if (slice3d.numel() > 0) {
+      NCCL_CHECK(ncclReduceScatter(
+          slice3d.data_ptr(),
+          slice3d[myDeviceIdxOnMachine_].data_ptr(),
+          slice3d[myDeviceIdxOnMachine_].numel(),
+          torchToNcclDtype(dtype),
+          ncclSum,
+          reduceScatterComm_.get(),
+          reduceScatterStream_));
+    }
     if (padding) {
       NCCL_CHECK(ncclReduceScatter(
           (*padding).data_ptr(),
@@ -294,23 +296,25 @@ void DeviceFairring::processOneSlice(
   reduceScatterToCollectEvent.block(collectStream_);
   if (numMachines_ > 1) {
     NCCL_CHECK(ncclGroupStart());
-    for (const auto serverMachineIdx : c10::irange(numMachines_)) {
-      NCCL_CHECK(ncclSend(
-          slice3d[myDeviceIdxOnMachine_][serverMachineIdx].data_ptr(),
-          slice3d[myDeviceIdxOnMachine_][serverMachineIdx].numel(),
-          torchToNcclDtype(dtype),
-          serverMachineIdx,
-          collectComm_.get(),
-          collectStream_));
-    }
-    for (const auto clientMachineIdx : c10::irange(numMachines_)) {
-      NCCL_CHECK(ncclRecv(
-          slice3dStaging[clientMachineIdx].data_ptr(),
-          slice3dStaging[clientMachineIdx].numel(),
-          torchToNcclDtype(dtype),
-          clientMachineIdx,
-          collectComm_.get(),
-          collectStream_));
+    if (slice3d.numel() > 0) {
+      for (const auto serverMachineIdx : c10::irange(numMachines_)) {
+        NCCL_CHECK(ncclSend(
+            slice3d[myDeviceIdxOnMachine_][serverMachineIdx].data_ptr(),
+            slice3d[myDeviceIdxOnMachine_][serverMachineIdx].numel(),
+            torchToNcclDtype(dtype),
+            serverMachineIdx,
+            collectComm_.get(),
+            collectStream_));
+      }
+      for (const auto clientMachineIdx : c10::irange(numMachines_)) {
+        NCCL_CHECK(ncclRecv(
+            slice3dStaging[clientMachineIdx].data_ptr(),
+            slice3dStaging[clientMachineIdx].numel(),
+            torchToNcclDtype(dtype),
+            clientMachineIdx,
+            collectComm_.get(),
+            collectStream_));
+      }
     }
     if (padding) {
       for (const auto serverMachineIdx : c10::irange(numMachines_)) {
@@ -340,8 +344,10 @@ void DeviceFairring::processOneSlice(
   if (numMachines_ > 1) {
     c10::cuda::CUDAStreamGuard g(addStream_);
     // sum_out wants its first argument to be an lvalue (for no good reason)
-    auto out = slice3d[myDeviceIdxOnMachine_][myMachineIdx_];
-    at::sum_out(out, slice3dStaging, {0});
+    if (slice3d.numel() > 0) {
+      auto out = slice3d[myDeviceIdxOnMachine_][myMachineIdx_];
+      at::sum_out(out, slice3dStaging, {0});
+    }
     if (padding) {
       auto paddingOut = (*padding)[myDeviceIdxOnMachine_][myMachineIdx_];
       at::sum_out(paddingOut, (*paddingStaging), {0});
@@ -356,26 +362,28 @@ void DeviceFairring::processOneSlice(
   addToDiffuseEvent.block(diffuseStream_);
   if (numMachines_ > 1) {
     NCCL_CHECK(ncclGroupStart());
-    for (const auto clientMachineIdx : c10::irange(numMachines_)) {
-      if (clientMachineIdx != myMachineIdx_) {
-        NCCL_CHECK(ncclSend(
-            slice3d[myDeviceIdxOnMachine_][myMachineIdx_].data_ptr(),
-            slice3d[myDeviceIdxOnMachine_][myMachineIdx_].numel(),
-            torchToNcclDtype(dtype),
-            clientMachineIdx,
-            diffuseComm_.get(),
-            diffuseStream_));
+    if (slice3d.numel() > 0) {
+      for (const auto clientMachineIdx : c10::irange(numMachines_)) {
+        if (clientMachineIdx != myMachineIdx_) {
+          NCCL_CHECK(ncclSend(
+              slice3d[myDeviceIdxOnMachine_][myMachineIdx_].data_ptr(),
+              slice3d[myDeviceIdxOnMachine_][myMachineIdx_].numel(),
+              torchToNcclDtype(dtype),
+              clientMachineIdx,
+              diffuseComm_.get(),
+              diffuseStream_));
+        }
       }
-    }
-    for (const auto serverMachineIdx : c10::irange(numMachines_)) {
-      if (serverMachineIdx != myMachineIdx_) {
-        NCCL_CHECK(ncclRecv(
-            slice3d[myDeviceIdxOnMachine_][serverMachineIdx].data_ptr(),
-            slice3d[myDeviceIdxOnMachine_][serverMachineIdx].numel(),
-            torchToNcclDtype(dtype),
-            serverMachineIdx,
-            diffuseComm_.get(),
-            diffuseStream_));
+      for (const auto serverMachineIdx : c10::irange(numMachines_)) {
+        if (serverMachineIdx != myMachineIdx_) {
+          NCCL_CHECK(ncclRecv(
+              slice3d[myDeviceIdxOnMachine_][serverMachineIdx].data_ptr(),
+              slice3d[myDeviceIdxOnMachine_][serverMachineIdx].numel(),
+              torchToNcclDtype(dtype),
+              serverMachineIdx,
+              diffuseComm_.get(),
+              diffuseStream_));
+        }
       }
     }
     if (padding) {
@@ -409,13 +417,15 @@ void DeviceFairring::processOneSlice(
   diffuseToAllGatherEvent.block(allGatherStream_);
   if (numDevicesPerMachine_ > 1) {
     NCCL_CHECK(ncclGroupStart());
-    NCCL_CHECK(ncclAllGather(
-        slice3d[myDeviceIdxOnMachine_].data_ptr(),
-        slice3d.data_ptr(),
-        slice3d[myDeviceIdxOnMachine_].numel(),
-        torchToNcclDtype(dtype),
-        allGatherComm_.get(),
-        allGatherStream_));
+    if (slice3d.numel() > 0) {
+      NCCL_CHECK(ncclAllGather(
+          slice3d[myDeviceIdxOnMachine_].data_ptr(),
+          slice3d.data_ptr(),
+          slice3d[myDeviceIdxOnMachine_].numel(),
+          torchToNcclDtype(dtype),
+          allGatherComm_.get(),
+          allGatherStream_));
+    }
     if (padding) {
       NCCL_CHECK(ncclAllGather(
           (*padding)[myDeviceIdxOnMachine_].data_ptr(),
@@ -433,7 +443,7 @@ void DeviceFairring::processOneSlice(
         reinterpret_cast<uint8_t*>(slice.data_ptr()) +
             slice3d.numel() * elementSizeInBytes,
         (*padding).data_ptr(),
-        (slice.numel() % slice3d.numel()) * elementSizeInBytes,
+        (slice.numel() - slice3d.numel()) * elementSizeInBytes,
         cudaMemcpyDeviceToDevice,
         allGatherStream_));
     (*paddingEvent).block(reduceScatterStream_);

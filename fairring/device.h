@@ -27,6 +27,7 @@ class DeviceFairring {
       size_t deviceIdxOnMachine,
       size_t numMachines,
       size_t numDevicesPerMachine,
+      size_t deviceGlobalRankIsFavorable,
       c10::intrusive_ptr<c10d::Store> store,
       NcclComm reduceScatterComm,
       NcclComm collectComm,
@@ -50,6 +51,7 @@ class DeviceFairring {
   size_t myDeviceIdxOnMachine_;
   size_t numMachines_;
   size_t numDevicesPerMachine_;
+  size_t deviceGlobalRankIsFavorable_;
   c10::intrusive_ptr<c10d::Store> store_;
   NcclComm reduceScatterComm_;
   NcclComm collectComm_;

@@ -62,6 +62,11 @@ AllReduceFairring::AllReduceFairring(
     size_t totalDevices = 0;
   };
   std::unordered_map<std::string, Machine> idToMachine;
+  struct Device {
+    size_t machineIdx = 0;
+    size_t idxWithinMachine = 0;
+  };
+  std::vector<Device> allDevices;
   int64_t idxOfMyMachine = -1;
   int64_t idxOfMyFirstDevice = -1;
   for (const auto otherRank : c10::irange(size)) {
@@ -80,6 +85,11 @@ AllReduceFairring::AllReduceFairring(
       idxOfMyMachine = otherMachine.idx;
       idxOfMyFirstDevice = otherMachine.totalDevices;
     }
+    for (const auto deviceOffset : c10::irange(otherNumDevices)) {
+      allDevices.push_back(Device{
+          .machineIdx = otherMachine.idx,
+          .idxWithinMachine = otherMachine.totalDevices + deviceOffset});
+    }
     otherMachine.totalDevices += otherNumDevices;
   }
 
@@ -90,6 +100,34 @@ AllReduceFairring::AllReduceFairring(
   size_t devicesPerMachine = idToMachine.begin()->second.totalDevices;
   for (const auto& kv : idToMachine) {
     TORCH_CHECK(kv.second.totalDevices == devicesPerMachine);
+  }
+
+  at::Tensor deviceGlobalRankAssignment = at::empty(
+      {static_cast<long>(numMachines), static_cast<long>(devicesPerMachine)},
+      at::kLong);
+  for (const auto deviceGlobalRank :
+       c10::irange(numMachines * devicesPerMachine)) {
+    const Device& device = allDevices[deviceGlobalRank];
+    deviceGlobalRankAssignment[device.machineIdx][device.idxWithinMachine] =
+        static_cast<long>(deviceGlobalRank);
+  }
+  bool deviceGlobalRankIsFavorable;
+  if (deviceGlobalRankAssignment.equal(
+          torch::arange(static_cast<long>(numMachines * devicesPerMachine))
+              .view(
+                  {static_cast<long>(devicesPerMachine),
+                   static_cast<long>(numMachines)})
+              .transpose(0, 1))) {
+    deviceGlobalRankIsFavorable = true;
+  } else if (deviceGlobalRankAssignment.equal(
+                 torch::arange(
+                     static_cast<long>(numMachines * devicesPerMachine))
+                     .view(
+                         {static_cast<long>(numMachines),
+                          static_cast<long>(devicesPerMachine)}))) {
+    deviceGlobalRankIsFavorable = false;
+  } else {
+    MY_CHECK(false);
   }
 
   ncclUniqueId reduceScatterUniqueId;
@@ -154,6 +192,7 @@ AllReduceFairring::AllReduceFairring(
         idxOfMyFirstDevice + deviceOffset,
         numMachines,
         devicesPerMachine,
+        deviceGlobalRankIsFavorable,
         store,
         std::move(reduceScatterComms[deviceOffset]),
         std::move(collectComms[deviceOffset]),

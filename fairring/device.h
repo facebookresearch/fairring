@@ -43,6 +43,10 @@ class DeviceFairring {
       c10d::ReduceOp opType,
       at::Tensor tensor);
 
+  c10::intrusive_ptr<c10::ivalue::Future> reduceScatter(
+      at::Tensor input,
+      at::Tensor output);
+
  private:
   // Common
 
@@ -81,6 +85,11 @@ class DeviceFairring {
   void allReduceOneSlice(
       at::Tensor slice,
       c10::optional<at::cuda::CUDAEvent> initialEvent);
+
+  void reduceScatterOneSlice(
+      at::Tensor input,
+      at::Tensor output,
+      at::cuda::CUDAEvent initialEvent);
 };
 
 } // namespace fairring

@@ -236,9 +236,54 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
         std::vector<at::Tensor>& outputTensors,
         std::vector<std::vector<at::Tensor>>& inputTensors,
         const c10d::ReduceScatterOptions& opts) {
+  // return c10::make_intrusive<WorkFairring>(
+  //     c10d::OpType::REDUCE_SCATTER,
+  //     ncclPG_->reduce_scatter(outputTensors, inputTensors,
+  //     opts)->getFuture());
+  MY_CHECK(inputTensors.size() == outputTensors.size());
+  size_t numDevicesPerRank = outputTensors.size();
+  std::vector<fairring::MachineFairring::TensorPair> data;
+  for (const auto deviceOffset : c10::irange(numDevicesPerRank)) {
+    MY_CHECK(inputTensors[deviceOffset].size() == size_ * numDevicesPerRank);
+    MY_CHECK(outputTensors[deviceOffset].layout() == at::kStrided);
+    MY_CHECK(outputTensors[deviceOffset].is_cuda());
+    MY_CHECK(outputTensors[deviceOffset].is_non_overlapping_and_dense());
+    std::vector<at::Tensor> flattened;
+    for (const at::Tensor& t : inputTensors[deviceOffset]) {
+      MY_CHECK(t.layout() == at::kStrided);
+      MY_CHECK(t.is_cuda());
+      MY_CHECK(t.is_non_overlapping_and_dense());
+      MY_CHECK(t.device() == outputTensors[deviceOffset].device());
+      MY_CHECK(t.scalar_type() == outputTensors[deviceOffset].scalar_type());
+      MY_CHECK(t.numel() == outputTensors[deviceOffset].numel());
+      flattened.push_back(t.flatten());
+    }
+    data.push_back(fairring::MachineFairring::TensorPair{
+        .input = torch::cat(std::move(flattened)),
+        .output = outputTensors[deviceOffset]});
+  }
+  if (machine_ == nullptr) {
+    std::set<c10::DeviceIndex> deviceSet;
+    for (const fairring::MachineFairring::TensorPair& pair : data) {
+      if (pair.output.is_cuda()) {
+        deviceSet.insert(pair.output.device().index());
+      }
+    }
+    std::vector<c10::Device> devices;
+    for (const c10::DeviceIndex& idx : deviceSet) {
+      devices.emplace_back(c10::kCUDA, idx);
+    }
+    machine_ = std::make_unique<fairring::MachineFairring>(
+        store_,
+        rank_,
+        size_,
+        std::move(devices),
+        maxMemoryAllocatedInBytes_,
+        maxPaddingAllocatedInBytes_,
+        minParallelism_);
+  }
   return c10::make_intrusive<WorkFairring>(
-      c10d::OpType::REDUCE_SCATTER,
-      ncclPG_->reduce_scatter(outputTensors, inputTensors, opts)->getFuture());
+      c10d::OpType::REDUCE_SCATTER, machine_->reduceScatter(std::move(data)));
 }
 
 c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
@@ -246,10 +291,45 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
         at::Tensor& outputBuffer,
         at::Tensor& inputBuffer,
         const c10d::ReduceScatterOptions& opts) {
+  // return c10::make_intrusive<WorkFairring>(
+  //     c10d::OpType::_REDUCE_SCATTER_BASE,
+  //     ncclPG_->_reduce_scatter_base(outputBuffer, inputBuffer, opts)
+  //         ->getFuture());
+  MY_CHECK(inputBuffer.layout() == at::kStrided);
+  MY_CHECK(inputBuffer.is_cuda());
+  MY_CHECK(inputBuffer.is_non_overlapping_and_dense());
+  MY_CHECK(outputBuffer.layout() == at::kStrided);
+  MY_CHECK(outputBuffer.is_cuda());
+  MY_CHECK(outputBuffer.is_non_overlapping_and_dense());
+  MY_CHECK(inputBuffer.device() == outputBuffer.device());
+  MY_CHECK(inputBuffer.scalar_type() == outputBuffer.scalar_type());
+  MY_CHECK(inputBuffer.numel() == outputBuffer.numel() * size_);
+  std::vector<fairring::MachineFairring::TensorPair> data = {
+      fairring::MachineFairring::TensorPair{
+          .input = inputBuffer, .output = outputBuffer}};
+  if (machine_ == nullptr) {
+    std::set<c10::DeviceIndex> deviceSet;
+    for (const fairring::MachineFairring::TensorPair& pair : data) {
+      if (pair.output.is_cuda()) {
+        deviceSet.insert(pair.output.device().index());
+      }
+    }
+    std::vector<c10::Device> devices;
+    for (const c10::DeviceIndex& idx : deviceSet) {
+      devices.emplace_back(c10::kCUDA, idx);
+    }
+    machine_ = std::make_unique<fairring::MachineFairring>(
+        store_,
+        rank_,
+        size_,
+        std::move(devices),
+        maxMemoryAllocatedInBytes_,
+        maxPaddingAllocatedInBytes_,
+        minParallelism_);
+  }
   return c10::make_intrusive<WorkFairring>(
       c10d::OpType::_REDUCE_SCATTER_BASE,
-      ncclPG_->_reduce_scatter_base(outputBuffer, inputBuffer, opts)
-          ->getFuture());
+      machine_->reduceScatter(std::move(data)));
 }
 
 c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::

@@ -324,6 +324,44 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::allReduce(
   return future;
 }
 
+c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::reduceScatter(
+    at::Tensor input,
+    at::Tensor output) {
+  // Because reduce-scatter cannot be sliced
+  MY_CHECK(numDevicesPerMachine_ >= 2);
+
+  at::cuda::CUDAEvent initialEvent;
+  initialEvent.record(c10::cuda::getCurrentCUDAStream(myDeviceIdxOnProcess_));
+
+  c10::intrusive_ptr<c10::ivalue::Future> future =
+      c10::make_intrusive<c10::ivalue::Future>(
+          c10::ListType::ofTensors(),
+          std::vector<c10::Device>(
+              {c10::Device(c10::kCUDA, myDeviceIdxOnProcess_)}));
+
+  cmdQueue_.enqueue([this,
+                     input = std::move(input),
+                     output = std::move(output),
+                     initialEvent = std::make_shared<at::cuda::CUDAEvent>(
+                         std::move(initialEvent)),
+                     future]() mutable {
+    MY_CHECK(kAlignment % input.element_size() == 0);
+    size_t seqNum = nextSlot_++;
+    try {
+      reduceScatterOneSlice(input, output, std::move(*initialEvent));
+      c10::cuda::CUDAStreamGuard g(addStream_);
+      future->markCompleted(std::vector<at::Tensor>{output});
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "Function for chunk #" << seqNum
+                 << " threw exception: " << e.what();
+      c10::cuda::CUDAStreamGuard g(addStream_);
+      future->setError(std::current_exception());
+    }
+  });
+
+  return future;
+}
+
 void DeviceFairring::allReduceOneSlice(
     at::Tensor slice,
     c10::optional<at::cuda::CUDAEvent> initialEvent) {
@@ -513,6 +551,84 @@ void DeviceFairring::allReduceOneSlice(
         cudaMemcpyDeviceToDevice,
         allGatherStream_));
     (*paddingEvent).record(allGatherStream_);
+  }
+}
+
+void DeviceFairring::reduceScatterOneSlice(
+    at::Tensor input,
+    at::Tensor output,
+    at::cuda::CUDAEvent initialEvent) {
+  c10::cuda::CUDAGuard g(myDeviceIdxOnProcess_);
+
+  c10::ScalarType dtype = input.scalar_type();
+  size_t elementSizeInBytes = input.element_size();
+
+  at::cuda::CUDAEvent reduceScatterToCollectEvent;
+  at::cuda::CUDAEvent collectToAddEvent;
+
+  MY_CHECK(input.numel() % (numDevicesPerMachine_ * numMachines_) == 0);
+  MY_CHECK(input.numel() == output.numel() * numDevicesPerMachine_ * numMachines_);
+  at::Tensor input3d;
+  if (deviceGlobalRankIsFavorable_) {
+    input3d = input.view(
+        {static_cast<long>(numDevicesPerMachine_),
+         static_cast<long>(numMachines_),
+         -1});
+  } else {
+    input3d = input
+                  .view(
+                      {static_cast<long>(numMachines_),
+                       static_cast<long>(numDevicesPerMachine_),
+                       -1})
+                  .transpose(0, 1);
+  }
+
+  MY_CHECK(numDevicesPerMachine_ >= 2);
+  at::Tensor input3dStaging =
+      input3d[(myDeviceIdxOnMachine_ + 1) % numDevicesPerMachine_];
+
+  initialEvent.block(reduceScatterStream_);
+
+  if (numMachines_ == 1) {
+    MY_CHECK(input3d.is_contiguous());
+    NCCL_CHECK(ncclReduceScatter(
+        input3d.data_ptr(),
+        output.data_ptr(),
+        output.numel(),
+        torchToNcclDtype(output.scalar_type()),
+        ncclSum,
+        reduceScatterComm_.get(),
+        reduceScatterStream_));
+  } else if (numDevicesPerMachine_ > 1) {
+    NCCL_CHECK(ncclGroupStart());
+    doReduceScatter(
+        input3d,
+        myDeviceIdxOnMachine_,
+        reduceScatterComm_,
+        reduceScatterStream_);
+    NCCL_CHECK(ncclGroupEnd());
+  }
+  reduceScatterToCollectEvent.record(reduceScatterStream_);
+
+  reduceScatterToCollectEvent.block(collectStream_);
+  if (numMachines_ > 1) {
+    NCCL_CHECK(ncclGroupStart());
+    doCollect(
+        input3d[myDeviceIdxOnMachine_],
+        input3dStaging,
+        myMachineIdx_,
+        collectComm_,
+        collectStream_);
+    NCCL_CHECK(ncclGroupEnd());
+  }
+  collectToAddEvent.record(collectStream_);
+
+  collectToAddEvent.block(addStream_);
+  if (numMachines_ > 1) {
+    c10::cuda::CUDAStreamGuard g(addStream_);
+    if (input3d.numel() > 0) {
+      at::sum_out(output, input3dStaging, {0});
+    }
   }
 }
 

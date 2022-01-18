@@ -260,7 +260,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
       flattened.push_back(viewAsFlat(t));
     }
     data.push_back(fairring::MachineFairring::TensorPair{
-        .input = torch::cat(std::move(flattened)),
+        .input = unUnbind(std::move(flattened)),
         .output = viewAsFlat(outputTensors[deviceOffset])});
   }
   if (machine_ == nullptr) {

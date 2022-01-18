@@ -138,6 +138,11 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::allreduce(
     const c10d::AllreduceOptions& opts) {
   // return c10::make_intrusive<WorkFairring>(
   //     c10d::OpType::ALLREDUCE, ncclPG_->allreduce(data, opts)->getFuture());
+  for (const at::Tensor& t : data) {
+    MY_CHECK(t.layout() == at::kStrided);
+    MY_CHECK(t.is_cuda());
+    MY_CHECK(t.is_non_overlapping_and_dense());
+  }
   if (machine_ == nullptr) {
     std::set<c10::DeviceIndex> deviceSet;
     for (const at::Tensor& t : data) {

@@ -228,39 +228,20 @@ MachineFairring::~MachineFairring() {
 c10::intrusive_ptr<c10::ivalue::Future> MachineFairring::allReduce(
     c10d::ReduceOp opType,
     std::vector<at::Tensor> tensors) {
-  TORCH_CHECK(tensors.size() == nodes_.size());
-  std::vector<c10::optional<at::Tensor>> tensorForClient(
-      nodes_.size(), c10::nullopt);
-  for (const at::Tensor& t : tensors) {
-    c10::Device device = t.device();
-    auto iter = deviceToOffset_.find(device);
-    TORCH_CHECK(iter != deviceToOffset_.end());
-    size_t offset = iter->second;
-    TORCH_CHECK(!tensorForClient[offset].has_value());
-    tensorForClient[offset] = t;
-  }
-
-  for (const at::Tensor& t : tensors) {
-    TORCH_CHECK(t.is_cuda());
-    TORCH_CHECK(t.is_non_overlapping_and_dense());
-  }
-
-  const at::Tensor& firstTensor = tensors[0];
-  for (const at::Tensor& t : tensors) {
-    TORCH_CHECK(t.scalar_type() == firstTensor.scalar_type());
-    TORCH_CHECK(t.sizes() == firstTensor.sizes());
-    TORCH_CHECK(t.strides() == firstTensor.strides());
-  }
-
   // FIXME Support more operation types
-  TORCH_CHECK(opType == c10d::ReduceOp::SUM);
+  MY_CHECK(opType == c10d::ReduceOp::SUM);
+
+  MY_CHECK(tensors.size() == devices_.size());
+  for (const auto deviceOffset : c10::irange(tensors.size())) {
+    MY_CHECK(tensors[deviceOffset].device() == devices_[deviceOffset]);
+  }
 
   c10::List<c10::intrusive_ptr<c10::ivalue::Future>> futures(
       c10::ListType::ofTensors());
   futures.reserve(nodes_.size());
   for (const auto idx : c10::irange(nodes_.size())) {
     const std::unique_ptr<DeviceFairring>& node = nodes_[idx];
-    futures.push_back(node->allReduce(opType, tensorForClient[idx].value()));
+    futures.push_back(node->allReduce(opType, tensors[idx]));
   }
 
   return mergeMultiDeviceFutures(std::move(futures));

@@ -43,9 +43,9 @@ setup(
         cpp_extension.CUDAExtension(
             "_fairring",
             [
-                "fairring/all_reduce.cc",
                 "fairring/bindings.cc",
                 "fairring/device.cc",
+                "fairring/machine.cc",
                 "fairring/process_group.cc",
             ],
             include_dirs=[get_my_dir()],

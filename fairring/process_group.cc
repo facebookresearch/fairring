@@ -13,7 +13,7 @@
 #include <c10d/PrefixStore.hpp>
 #include <c10d/ProcessGroupNCCL.hpp>
 
-#include <fairring/all_reduce.h>
+#include <fairring/machine.h>
 
 namespace {
 
@@ -149,7 +149,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::allreduce(
     for (const c10::DeviceIndex& idx : deviceSet) {
       devices.emplace_back(c10::kCUDA, idx);
     }
-    allReduce_ = std::make_unique<fairring::AllReduceFairring>(
+    allReduce_ = std::make_unique<fairring::MachineFairring>(
         store_,
         rank_,
         size_,

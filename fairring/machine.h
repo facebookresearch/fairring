@@ -22,9 +22,9 @@ namespace fairring {
 
 class DeviceFairring;
 
-class AllReduceFairring {
+class MachineFairring {
  public:
-  AllReduceFairring(
+  MachineFairring(
       c10::intrusive_ptr<c10d::Store> store,
       int rank,
       int size,
@@ -33,7 +33,7 @@ class AllReduceFairring {
       size_t maxPaddingAllocatedInBytes,
       size_t minParallelism);
 
-  ~AllReduceFairring();
+  ~MachineFairring();
 
   c10::intrusive_ptr<c10::ivalue::Future> allReduce(
       c10d::ReduceOp opType,

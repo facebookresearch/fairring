@@ -6,7 +6,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-#include <fairring/all_reduce.h>
+#include <fairring/machine.h>
 
 #include <chrono>
 #include <fstream>
@@ -37,7 +37,7 @@ c10::optional<std::string> getBootID() {
 
 namespace fairring {
 
-AllReduceFairring::AllReduceFairring(
+MachineFairring::MachineFairring(
     c10::intrusive_ptr<c10d::Store> store,
     int rank,
     int size,
@@ -210,7 +210,7 @@ AllReduceFairring::AllReduceFairring(
   }
 }
 
-AllReduceFairring::~AllReduceFairring() {
+MachineFairring::~MachineFairring() {
   // This is kinda stupid: when waiting on a Future's value this synchonizes the
   // current CUDA stream with the Future, and also records the Future's DataPtrs
   // on those current streams. This means that later on, when those DataPtrs are
@@ -225,7 +225,7 @@ AllReduceFairring::~AllReduceFairring() {
   }
 }
 
-c10::intrusive_ptr<c10::ivalue::Future> AllReduceFairring::allReduce(
+c10::intrusive_ptr<c10::ivalue::Future> MachineFairring::allReduce(
     c10d::ReduceOp opType,
     std::vector<at::Tensor> tensors) {
   TORCH_CHECK(tensors.size() == nodes_.size());

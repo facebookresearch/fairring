@@ -22,8 +22,8 @@ setup(
         cpp_extension.CUDAExtension(
             "benchmark_fairring",
             [
-                "../fairring/all_reduce.cc",
                 "../fairring/device.cc",
+                "../fairring/machine.cc",
                 "../fairring/process_group.cc",
                 "benchmark.cc",
             ],

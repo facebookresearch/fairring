@@ -263,6 +263,12 @@ c10::intrusive_ptr<c10::ivalue::Future> MachineFairring::allReduce(
     futures.push_back(node->allReduce(opType, tensorForClient[idx].value()));
   }
 
+  return mergeMultiDeviceFutures(std::move(futures));
+}
+
+c10::intrusive_ptr<c10::ivalue::Future> MachineFairring::
+    mergeMultiDeviceFutures(
+        c10::List<c10::intrusive_ptr<c10::ivalue::Future>> futures) {
   if (futures.size() == 1) {
     return futures.extract(0);
   }

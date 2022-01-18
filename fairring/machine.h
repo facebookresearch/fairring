@@ -44,6 +44,9 @@ class MachineFairring {
   std::vector<c10::Device> devices_;
   std::vector<CudaStream> streams_;
   std::unordered_map<c10::Device, size_t> deviceToOffset_;
+
+  c10::intrusive_ptr<c10::ivalue::Future> mergeMultiDeviceFutures(
+      c10::List<c10::intrusive_ptr<c10::ivalue::Future>> futures);
 };
 
 } // namespace fairring

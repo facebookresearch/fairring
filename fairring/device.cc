@@ -301,7 +301,7 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::allReduce(
           ? std::move(future)
           : c10::intrusive_ptr<c10::ivalue::Future>();
       try {
-        processOneSlice(
+        allReduceOneSlice(
             std::move(slice),
             sliceIdx == 0
                 ? c10::optional<at::cuda::CUDAEvent>(std::move(*initialEvent))
@@ -324,7 +324,7 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::allReduce(
   return future;
 }
 
-void DeviceFairring::processOneSlice(
+void DeviceFairring::allReduceOneSlice(
     at::Tensor slice,
     c10::optional<at::cuda::CUDAEvent> initialEvent) {
   c10::cuda::CUDAGuard g(myDeviceIdxOnProcess_);

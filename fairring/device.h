@@ -78,7 +78,7 @@ class DeviceFairring {
   std::thread cmdThread_;
   size_t nextSlot_{0};
 
-  void processOneSlice(
+  void allReduceOneSlice(
       at::Tensor slice,
       c10::optional<at::cuda::CUDAEvent> initialEvent);
 };

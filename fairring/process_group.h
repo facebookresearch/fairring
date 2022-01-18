@@ -180,7 +180,7 @@ class ProcessGroupFairring : public c10d::ProcessGroup {
   size_t maxPaddingAllocatedInBytes_;
   size_t minParallelism_;
   c10::intrusive_ptr<c10d::Store> store_;
-  std::unique_ptr<MachineFairring> allReduce_;
+  std::unique_ptr<MachineFairring> machine_;
 };
 
 } // namespace fairring

@@ -138,7 +138,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::allreduce(
     const c10d::AllreduceOptions& opts) {
   // return c10::make_intrusive<WorkFairring>(
   //     c10d::OpType::ALLREDUCE, ncclPG_->allreduce(data, opts)->getFuture());
-  if (allReduce_ == nullptr) {
+  if (machine_ == nullptr) {
     std::set<c10::DeviceIndex> deviceSet;
     for (const at::Tensor& t : data) {
       if (t.is_cuda()) {
@@ -149,7 +149,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::allreduce(
     for (const c10::DeviceIndex& idx : deviceSet) {
       devices.emplace_back(c10::kCUDA, idx);
     }
-    allReduce_ = std::make_unique<fairring::MachineFairring>(
+    machine_ = std::make_unique<fairring::MachineFairring>(
         store_,
         rank_,
         size_,
@@ -159,7 +159,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::allreduce(
         minParallelism_);
   }
   return c10::make_intrusive<WorkFairring>(
-      c10d::OpType::ALLREDUCE, allReduce_->allReduce(opts.reduceOp, data));
+      c10d::OpType::ALLREDUCE, machine_->allReduce(opts.reduceOp, data));
 }
 
 c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::

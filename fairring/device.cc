@@ -295,7 +295,7 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::allReduce(
       size_t offsetInElems = sliceIdx * maxSliceSizeInElems;
       size_t sliceSizeInElems =
           std::min(maxSliceSizeInElems, numElements - offsetInElems);
-      at::Tensor slice = tensor.flatten().slice(
+      at::Tensor slice = tensor.slice(
           /*dim=*/0, offsetInElems, offsetInElems + sliceSizeInElems);
       auto myFuture = sliceIdx == numSlices - 1
           ? std::move(future)

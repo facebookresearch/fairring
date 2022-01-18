@@ -138,10 +138,11 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::allreduce(
     const c10d::AllreduceOptions& opts) {
   // return c10::make_intrusive<WorkFairring>(
   //     c10d::OpType::ALLREDUCE, ncclPG_->allreduce(data, opts)->getFuture());
-  for (const at::Tensor& t : data) {
+  for (at::Tensor& t : data) {
     MY_CHECK(t.layout() == at::kStrided);
     MY_CHECK(t.is_cuda());
     MY_CHECK(t.is_non_overlapping_and_dense());
+    t = viewAsFlat(t);
   }
   if (machine_ == nullptr) {
     std::set<c10::DeviceIndex> deviceSet;
@@ -256,11 +257,11 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
       MY_CHECK(t.device() == outputTensors[deviceOffset].device());
       MY_CHECK(t.scalar_type() == outputTensors[deviceOffset].scalar_type());
       MY_CHECK(t.numel() == outputTensors[deviceOffset].numel());
-      flattened.push_back(t.flatten());
+      flattened.push_back(viewAsFlat(t));
     }
     data.push_back(fairring::MachineFairring::TensorPair{
         .input = torch::cat(std::move(flattened)),
-        .output = outputTensors[deviceOffset]});
+        .output = viewAsFlat(outputTensors[deviceOffset])});
   }
   if (machine_ == nullptr) {
     std::set<c10::DeviceIndex> deviceSet;
@@ -306,7 +307,8 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
   MY_CHECK(inputBuffer.numel() == outputBuffer.numel() * size_);
   std::vector<fairring::MachineFairring::TensorPair> data = {
       fairring::MachineFairring::TensorPair{
-          .input = inputBuffer, .output = outputBuffer}};
+          .input = viewAsFlat(inputBuffer),
+          .output = viewAsFlat(outputBuffer)}};
   if (machine_ == nullptr) {
     std::set<c10::DeviceIndex> deviceSet;
     for (const fairring::MachineFairring::TensorPair& pair : data) {

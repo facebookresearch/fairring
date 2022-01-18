@@ -339,4 +339,14 @@ class CommandQueue {
   std::deque<std::function<void()>> fns_;
 };
 
+inline at::Tensor viewAsFlat(const at::Tensor& t) {
+  MY_CHECK(t.layout() == at::kStrided);
+  MY_CHECK(t.is_non_overlapping_and_dense());
+  auto flatTImpl = c10::make_intrusive<c10::TensorImpl>(
+      c10::TensorImpl::VIEW, c10::Storage(t.storage()), t.key_set(), t.dtype());
+  flatTImpl->set_storage_offset(t.storage_offset());
+  flatTImpl->set_sizes_contiguous({t.numel()});
+  return at::Tensor(std::move(flatTImpl));
+}
+
 } // namespace fairring

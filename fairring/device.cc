@@ -446,7 +446,7 @@ void DeviceFairring::processOneSlice(
         (slice.numel() - slice3d.numel()) * elementSizeInBytes,
         cudaMemcpyDeviceToDevice,
         allGatherStream_));
-    (*paddingEvent).block(reduceScatterStream_);
+    (*paddingEvent).record(allGatherStream_);
   }
 }
 

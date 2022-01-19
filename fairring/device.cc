@@ -567,7 +567,8 @@ void DeviceFairring::reduceScatterOneSlice(
   at::cuda::CUDAEvent collectToAddEvent;
 
   MY_CHECK(input.numel() % (numDevicesPerMachine_ * numMachines_) == 0);
-  MY_CHECK(input.numel() == output.numel() * numDevicesPerMachine_ * numMachines_);
+  MY_CHECK(
+      input.numel() == output.numel() * numDevicesPerMachine_ * numMachines_);
   at::Tensor input3d;
   if (deviceGlobalRankIsFavorable_) {
     input3d = input.view(

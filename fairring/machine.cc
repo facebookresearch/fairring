@@ -266,6 +266,24 @@ c10::intrusive_ptr<c10::ivalue::Future> MachineFairring::reduceScatter(
   return mergeMultiDeviceFutures(std::move(futures));
 }
 
+c10::intrusive_ptr<c10::ivalue::Future> MachineFairring::allGather(
+    std::vector<TensorPair> tensors) {
+  MY_CHECK(tensors.size() == devices_.size());
+  for (const auto deviceOffset : c10::irange(tensors.size())) {
+    MY_CHECK(tensors[deviceOffset].input.device() == devices_[deviceOffset]);
+  }
+
+  c10::List<c10::intrusive_ptr<c10::ivalue::Future>> futures(
+      c10::ListType::ofTensors());
+  futures.reserve(nodes_.size());
+  for (const auto idx : c10::irange(nodes_.size())) {
+    const std::unique_ptr<DeviceFairring>& node = nodes_[idx];
+    futures.push_back(node->allGather(tensors[idx].input, tensors[idx].output));
+  }
+
+  return mergeMultiDeviceFutures(std::move(futures));
+}
+
 c10::intrusive_ptr<c10::ivalue::Future> MachineFairring::
     mergeMultiDeviceFutures(
         c10::List<c10::intrusive_ptr<c10::ivalue::Future>> futures) {

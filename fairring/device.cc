@@ -114,38 +114,44 @@ void doCollect(
 }
 
 void doDiffuse(
-    at::Tensor t,
+    at::Tensor sendT,
+    at::Tensor recvT,
     size_t myRank,
     NcclComm& comm,
     CudaStream& stream) {
-  MY_CHECK(t.layout() == at::kStrided);
-  MY_CHECK(t.dim() >= 1);
-  MY_CHECK((0 <= myRank) && (myRank < t.size(0)));
-  MY_CHECK(t[0].is_non_overlapping_and_dense());
-  if (t.numel() == 0) {
+  MY_CHECK(sendT.layout() == at::kStrided);
+  MY_CHECK(recvT.layout() == at::kStrided);
+  MY_CHECK(recvT.dim() >= 1);
+  MY_CHECK((0 <= myRank) && (myRank < recvT.size(0)));
+  MY_CHECK(sendT.sizes() == recvT[0].sizes());
+  MY_CHECK(sendT.strides() == recvT[0].strides());
+  MY_CHECK(recvT[0].is_non_overlapping_and_dense());
+  if (recvT.numel() == 0) {
     return;
   }
-  for (const auto otherRank : c10::irange(t.size(0))) {
-    if (otherRank != myRank) {
-      NCCL_CHECK(ncclSend(
-          t[myRank].data_ptr(),
-          t[myRank].numel(),
-          torchToNcclDtype(t.scalar_type()),
-          otherRank,
-          comm.get(),
-          stream));
+  for (const auto otherRank : c10::irange(recvT.size(0))) {
+    if (otherRank == myRank && recvT[myRank].data_ptr() == sendT.data_ptr()) {
+      continue;
     }
+    NCCL_CHECK(ncclSend(
+        sendT.data_ptr(),
+        sendT.numel(),
+        torchToNcclDtype(recvT.scalar_type()),
+        otherRank,
+        comm.get(),
+        stream));
   }
-  for (const auto otherRank : c10::irange(t.size(0))) {
-    if (otherRank != myRank) {
-      NCCL_CHECK(ncclRecv(
-          t[otherRank].data_ptr(),
-          t[otherRank].numel(),
-          torchToNcclDtype(t.scalar_type()),
-          otherRank,
-          comm.get(),
-          stream));
+  for (const auto otherRank : c10::irange(recvT.size(0))) {
+    if (otherRank == myRank && recvT[myRank].data_ptr() == sendT.data_ptr()) {
+      continue;
     }
+    NCCL_CHECK(ncclRecv(
+        recvT[otherRank].data_ptr(),
+        recvT[otherRank].numel(),
+        torchToNcclDtype(recvT.scalar_type()),
+        otherRank,
+        comm.get(),
+        stream));
   }
 }
 
@@ -362,6 +368,44 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::reduceScatter(
   return future;
 }
 
+c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::allGather(
+    at::Tensor input,
+    at::Tensor output) {
+  // Because all-gather cannot be sliced
+  MY_CHECK(numDevicesPerMachine_ >= 2);
+
+  at::cuda::CUDAEvent initialEvent;
+  initialEvent.record(c10::cuda::getCurrentCUDAStream(myDeviceIdxOnProcess_));
+
+  c10::intrusive_ptr<c10::ivalue::Future> future =
+      c10::make_intrusive<c10::ivalue::Future>(
+          c10::ListType::ofTensors(),
+          std::vector<c10::Device>(
+              {c10::Device(c10::kCUDA, myDeviceIdxOnProcess_)}));
+
+  cmdQueue_.enqueue([this,
+                     input = std::move(input),
+                     output = std::move(output),
+                     initialEvent = std::make_shared<at::cuda::CUDAEvent>(
+                         std::move(initialEvent)),
+                     future]() mutable {
+    MY_CHECK(kAlignment % input.element_size() == 0);
+    size_t seqNum = nextSlot_++;
+    try {
+      allGatherOneSlice(input, output, std::move(*initialEvent));
+      c10::cuda::CUDAStreamGuard g(allGatherStream_);
+      future->markCompleted(std::vector<at::Tensor>{output});
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "Function for chunk #" << seqNum
+                 << " threw exception: " << e.what();
+      c10::cuda::CUDAStreamGuard g(allGatherStream_);
+      future->setError(std::current_exception());
+    }
+  });
+
+  return future;
+}
+
 void DeviceFairring::allReduceOneSlice(
     at::Tensor slice,
     c10::optional<at::cuda::CUDAEvent> initialEvent) {
@@ -515,12 +559,14 @@ void DeviceFairring::allReduceOneSlice(
   if (numMachines_ > 1) {
     NCCL_CHECK(ncclGroupStart());
     doDiffuse(
+        slice3d[myDeviceIdxOnMachine_][myMachineIdx_],
         slice3d[myDeviceIdxOnMachine_],
         myMachineIdx_,
         diffuseComm_,
         diffuseStream_);
     if (padding) {
       doDiffuse(
+          (*padding)[myDeviceIdxOnMachine_][myMachineIdx_],
           (*padding)[myDeviceIdxOnMachine_],
           myMachineIdx_,
           diffuseComm_,
@@ -630,6 +676,67 @@ void DeviceFairring::reduceScatterOneSlice(
     if (input3d.numel() > 0) {
       at::sum_out(output, input3dStaging, {0});
     }
+  }
+}
+
+void DeviceFairring::allGatherOneSlice(
+    at::Tensor input,
+    at::Tensor output,
+    at::cuda::CUDAEvent initialEvent) {
+  c10::cuda::CUDAGuard g(myDeviceIdxOnProcess_);
+
+  c10::ScalarType dtype = input.scalar_type();
+  size_t elementSizeInBytes = input.element_size();
+
+  at::cuda::CUDAEvent diffuseToAllGatherEvent;
+
+  MY_CHECK(output.numel() % (numDevicesPerMachine_ * numMachines_) == 0);
+  MY_CHECK(
+      output.numel() == input.numel() * numDevicesPerMachine_ * numMachines_);
+  at::Tensor output3d;
+  if (deviceGlobalRankIsFavorable_) {
+    output3d = output.view(
+        {static_cast<long>(numDevicesPerMachine_),
+         static_cast<long>(numMachines_),
+         -1});
+  } else {
+    output3d = output
+                   .view(
+                       {static_cast<long>(numMachines_),
+                        static_cast<long>(numDevicesPerMachine_),
+                        -1})
+                   .transpose(0, 1);
+  }
+
+  initialEvent.block(diffuseStream_);
+
+  if (numMachines_ > 1) {
+    NCCL_CHECK(ncclGroupStart());
+    doDiffuse(
+        input,
+        output3d[myDeviceIdxOnMachine_],
+        myMachineIdx_,
+        diffuseComm_,
+        diffuseStream_);
+    NCCL_CHECK(ncclGroupEnd());
+  }
+  diffuseToAllGatherEvent.record(diffuseStream_);
+
+  diffuseToAllGatherEvent.block(allGatherStream_);
+  if (numMachines_ == 1) {
+    MY_CHECK(output3d.is_contiguous());
+    NCCL_CHECK(ncclAllGather(
+        input.data_ptr(),
+        output3d.data_ptr(),
+        input.numel(),
+        torchToNcclDtype(input.scalar_type()),
+        allGatherComm_.get(),
+        allGatherStream_));
+  } else if (numDevicesPerMachine_ > 1) {
+    NCCL_CHECK(ncclGroupStart());
+    doAllGather(
+        output3d, myDeviceIdxOnMachine_, allGatherComm_, allGatherStream_);
+    NCCL_CHECK(ncclGroupEnd());
   }
 }
 

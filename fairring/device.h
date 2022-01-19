@@ -47,6 +47,10 @@ class DeviceFairring {
       at::Tensor input,
       at::Tensor output);
 
+  c10::intrusive_ptr<c10::ivalue::Future> allGather(
+      at::Tensor input,
+      at::Tensor output);
+
  private:
   // Common
 
@@ -87,6 +91,11 @@ class DeviceFairring {
       c10::optional<at::cuda::CUDAEvent> initialEvent);
 
   void reduceScatterOneSlice(
+      at::Tensor input,
+      at::Tensor output,
+      at::cuda::CUDAEvent initialEvent);
+
+  void allGatherOneSlice(
       at::Tensor input,
       at::Tensor output,
       at::cuda::CUDAEvent initialEvent);

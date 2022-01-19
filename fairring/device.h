@@ -22,20 +22,20 @@ namespace fairring {
 class DeviceFairring {
  public:
   DeviceFairring(
-      size_t deviceIdxOnProcess,
-      size_t machineIdx,
-      size_t deviceIdxOnMachine,
-      size_t numMachines,
-      size_t numDevicesPerMachine,
-      size_t deviceGlobalRankIsFavorable,
+      int64_t deviceIdxOnProcess,
+      int64_t machineIdx,
+      int64_t deviceIdxOnMachine,
+      int64_t numMachines,
+      int64_t numDevicesPerMachine,
+      int64_t deviceGlobalRankIsFavorable,
       c10::intrusive_ptr<c10d::Store> store,
       NcclComm reduceScatterComm,
       NcclComm collectComm,
       NcclComm diffuseComm,
       NcclComm allGatherComm,
-      size_t maxMemoryAllocatedInBytes,
-      size_t maxPaddingAllocatedInBytes,
-      size_t minParallelism);
+      int64_t maxMemoryAllocatedInBytes,
+      int64_t maxPaddingAllocatedInBytes,
+      int64_t minParallelism);
 
   ~DeviceFairring();
 
@@ -54,12 +54,12 @@ class DeviceFairring {
  private:
   // Common
 
-  size_t myDeviceIdxOnProcess_;
-  size_t myMachineIdx_;
-  size_t myDeviceIdxOnMachine_;
-  size_t numMachines_;
-  size_t numDevicesPerMachine_;
-  size_t deviceGlobalRankIsFavorable_;
+  int64_t myDeviceIdxOnProcess_;
+  int64_t myMachineIdx_;
+  int64_t myDeviceIdxOnMachine_;
+  int64_t numMachines_;
+  int64_t numDevicesPerMachine_;
+  int64_t deviceGlobalRankIsFavorable_;
   c10::intrusive_ptr<c10d::Store> store_;
   NcclComm reduceScatterComm_;
   NcclComm collectComm_;
@@ -75,16 +75,16 @@ class DeviceFairring {
 
   at::Tensor paddingBuffer_;
   std::vector<at::cuda::CUDAEvent> paddingEvents_;
-  size_t nextPaddingSlot_{0};
+  int64_t nextPaddingSlot_{0};
 
   at::Tensor stagingBuffer_;
   at::Tensor paddingStagingBuffer_;
   std::vector<at::cuda::CUDAEvent> stagingEvents_;
-  size_t nextStagingSlot_{0};
+  int64_t nextStagingSlot_{0};
 
   CommandQueue cmdQueue_;
   std::thread cmdThread_;
-  size_t nextSlot_{0};
+  int64_t nextSlot_{0};
 
   void allReduceOneSlice(
       at::Tensor slice,

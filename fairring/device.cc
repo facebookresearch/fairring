@@ -16,7 +16,7 @@ namespace fairring {
 
 namespace {
 
-std::vector<CudaStream> makeManyCudaStreams(size_t amount, int deviceIdx) {
+std::vector<CudaStream> makeManyCudaStreams(int64_t amount, int deviceIdx) {
   std::vector<CudaStream> result;
   result.reserve(amount);
   for (const auto _ : c10::irange(amount)) {
@@ -41,7 +41,7 @@ auto makeManyCudaEvents(int n, T... args) {
 
 void doReduceScatter(
     at::Tensor t,
-    size_t myRank,
+    int64_t myRank,
     NcclComm& comm,
     CudaStream& stream) {
   MY_CHECK(t.layout() == at::kStrided);
@@ -80,7 +80,7 @@ void doReduceScatter(
 void doCollect(
     at::Tensor sendT,
     at::Tensor recvT,
-    size_t myRank,
+    int64_t myRank,
     NcclComm& comm,
     CudaStream& stream) {
   MY_CHECK(sendT.layout() == at::kStrided);
@@ -116,7 +116,7 @@ void doCollect(
 void doDiffuse(
     at::Tensor sendT,
     at::Tensor recvT,
-    size_t myRank,
+    int64_t myRank,
     NcclComm& comm,
     CudaStream& stream) {
   MY_CHECK(sendT.layout() == at::kStrided);
@@ -157,7 +157,7 @@ void doDiffuse(
 
 void doAllGather(
     at::Tensor t,
-    size_t myRank,
+    int64_t myRank,
     NcclComm& comm,
     CudaStream& stream) {
   MY_CHECK(t.layout() == at::kStrided);
@@ -194,20 +194,20 @@ void doAllGather(
 } // namespace
 
 DeviceFairring::DeviceFairring(
-    size_t deviceIdxOnProcess,
-    size_t machineIdx,
-    size_t deviceIdxOnMachine,
-    size_t numMachines,
-    size_t numDevicesPerMachine,
-    size_t deviceGlobalRankIsFavorable,
+    int64_t deviceIdxOnProcess,
+    int64_t machineIdx,
+    int64_t deviceIdxOnMachine,
+    int64_t numMachines,
+    int64_t numDevicesPerMachine,
+    int64_t deviceGlobalRankIsFavorable,
     c10::intrusive_ptr<c10d::Store> store,
     NcclComm reduceScatterComm,
     NcclComm collectComm,
     NcclComm diffuseComm,
     NcclComm allGatherComm,
-    size_t maxMemoryAllocatedInBytes,
-    size_t maxPaddingAllocatedInBytes,
-    size_t minParallelism)
+    int64_t maxMemoryAllocatedInBytes,
+    int64_t maxPaddingAllocatedInBytes,
+    int64_t minParallelism)
     : // Arguments
       myDeviceIdxOnProcess_(deviceIdxOnProcess),
       myMachineIdx_(machineIdx),
@@ -234,26 +234,22 @@ DeviceFairring::DeviceFairring(
       allGatherStream_(CudaStream(myDeviceIdxOnProcess_)),
       // Padding
       paddingBuffer_(at::empty(
-          {static_cast<long>(layout_.numPaddingSlots),
-           static_cast<long>(numDevicesPerMachine_),
-           static_cast<long>(numMachines_),
-           static_cast<long>(kAlignment)},
+          {layout_.numPaddingSlots,
+           numDevicesPerMachine_,
+           numMachines_,
+           kAlignment},
           c10::TensorOptions()
               .dtype(c10::kByte)
               .device(c10::Device(c10::kCUDA, myDeviceIdxOnProcess_)))),
       paddingEvents_(makeManyCudaEvents(layout_.numPaddingSlots)),
       // Staging
       stagingBuffer_(at::empty(
-          {static_cast<long>(layout_.numStagingSlots),
-           static_cast<long>(numMachines_),
-           static_cast<long>(layout_.slotSizeInBytes)},
+          {layout_.numStagingSlots, numMachines_, layout_.slotSizeInBytes},
           c10::TensorOptions()
               .dtype(c10::kByte)
               .device(c10::Device(c10::kCUDA, myDeviceIdxOnProcess_)))),
       paddingStagingBuffer_(at::empty(
-          {static_cast<long>(layout_.numStagingSlots),
-           static_cast<long>(numMachines_),
-           static_cast<long>(kAlignment)},
+          {layout_.numStagingSlots, numMachines_, kAlignment},
           c10::TensorOptions()
               .dtype(c10::kByte)
               .device(c10::Device(c10::kCUDA, myDeviceIdxOnProcess_)))),
@@ -291,15 +287,15 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::allReduce(
                      initialEvent = std::make_shared<at::cuda::CUDAEvent>(
                          std::move(initialEvent)),
                      future]() mutable {
-    size_t numElements = tensor.numel();
+    int64_t numElements = tensor.numel();
     MY_CHECK(kAlignment % tensor.element_size() == 0);
-    size_t maxSliceSizeInElems =
+    int64_t maxSliceSizeInElems =
         layout_.sliceSizeInBytes / tensor.element_size();
-    size_t numSlices = ceilOfRatio(numElements, maxSliceSizeInElems);
+    int64_t numSlices = ceilOfRatio(numElements, maxSliceSizeInElems);
     for (const auto sliceIdx : c10::irange(numSlices)) {
-      size_t seqNum = nextSlot_++;
-      size_t offsetInElems = sliceIdx * maxSliceSizeInElems;
-      size_t sliceSizeInElems =
+      int64_t seqNum = nextSlot_++;
+      int64_t offsetInElems = sliceIdx * maxSliceSizeInElems;
+      int64_t sliceSizeInElems =
           std::min(maxSliceSizeInElems, numElements - offsetInElems);
       at::Tensor slice = tensor.slice(
           /*dim=*/0, offsetInElems, offsetInElems + sliceSizeInElems);
@@ -352,7 +348,7 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::reduceScatter(
                          std::move(initialEvent)),
                      future]() mutable {
     MY_CHECK(kAlignment % input.element_size() == 0);
-    size_t seqNum = nextSlot_++;
+    int64_t seqNum = nextSlot_++;
     try {
       reduceScatterOneSlice(input, output, std::move(*initialEvent));
       c10::cuda::CUDAStreamGuard g(addStream_);
@@ -390,7 +386,7 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::allGather(
                          std::move(initialEvent)),
                      future]() mutable {
     MY_CHECK(kAlignment % input.element_size() == 0);
-    size_t seqNum = nextSlot_++;
+    int64_t seqNum = nextSlot_++;
     try {
       allGatherOneSlice(input, output, std::move(*initialEvent));
       c10::cuda::CUDAStreamGuard g(allGatherStream_);
@@ -412,7 +408,7 @@ void DeviceFairring::allReduceOneSlice(
   c10::cuda::CUDAGuard g(myDeviceIdxOnProcess_);
 
   c10::ScalarType dtype = slice.scalar_type();
-  size_t elementSizeInBytes = slice.element_size();
+  int64_t elementSizeInBytes = slice.element_size();
 
   at::cuda::CUDAEvent reduceScatterToCollectEvent;
   at::cuda::CUDAEvent collectToAddEvent;
@@ -423,28 +419,19 @@ void DeviceFairring::allReduceOneSlice(
   c10::optional<at::Tensor> padding;
   at::cuda::CUDAEvent* paddingEvent = nullptr;
   if (slice.numel() % (numDevicesPerMachine_ * numMachines_) == 0) {
-    slice3d = slice.view(
-        {static_cast<long>(numDevicesPerMachine_),
-         static_cast<long>(numMachines_),
-         -1});
+    slice3d = slice.view({numDevicesPerMachine_, numMachines_, -1});
   } else {
-    size_t sliceSizeInElems = roundDownToNearestMultiple(
-        static_cast<size_t>(slice.numel()),
-        numDevicesPerMachine_ * numMachines_);
+    int64_t sliceSizeInElems = roundDownToNearestMultiple(
+        slice.numel(), numDevicesPerMachine_ * numMachines_);
     slice3d = slice.index({torch::indexing::Slice(0, sliceSizeInElems)})
-                  .view(
-                      {static_cast<long>(numDevicesPerMachine_),
-                       static_cast<long>(numMachines_),
-                       -1});
-    size_t paddingSlotIdx = (nextPaddingSlot_++) % layout_.numPaddingSlots;
+                  .view({numDevicesPerMachine_, numMachines_, -1});
+    int64_t paddingSlotIdx = (nextPaddingSlot_++) % layout_.numPaddingSlots;
     padding = paddingBuffer_[paddingSlotIdx]
                   .view(dtype)
                   .flatten()
                   .index({torch::indexing::Slice(
                       0, numDevicesPerMachine_ * numMachines_)})
-                  .view(
-                      {static_cast<long>(numDevicesPerMachine_),
-                       static_cast<long>(numMachines_)});
+                  .view({numDevicesPerMachine_, numMachines_});
     paddingEvent = &paddingEvents_[paddingSlotIdx];
   }
 
@@ -452,20 +439,20 @@ void DeviceFairring::allReduceOneSlice(
   c10::optional<at::Tensor> paddingStaging;
   at::cuda::CUDAEvent* stagingEvent = nullptr;
   if (numDevicesPerMachine_ == 1) {
-    size_t stagingSlotIdx = (nextStagingSlot_++) % layout_.numStagingSlots;
+    int64_t stagingSlotIdx = (nextStagingSlot_++) % layout_.numStagingSlots;
     slice3dStaging = stagingBuffer_[stagingSlotIdx]
                          .view(dtype)
                          .flatten()
                          .index({torch::indexing::Slice(
                              0, slice3d[myDeviceIdxOnMachine_].numel())})
-                         .view({static_cast<long>(numMachines_), -1});
+                         .view({numMachines_, -1});
     if (padding) {
       paddingStaging = paddingStagingBuffer_[stagingSlotIdx]
                            .view(dtype)
                            .flatten()
                            .index({torch::indexing::Slice(
                                0, (*padding)[myDeviceIdxOnMachine_].numel())})
-                           .view({static_cast<long>(numMachines_)});
+                           .view({numMachines_});
     }
     stagingEvent = &stagingEvents_[stagingSlotIdx];
   } else {
@@ -606,9 +593,6 @@ void DeviceFairring::reduceScatterOneSlice(
     at::cuda::CUDAEvent initialEvent) {
   c10::cuda::CUDAGuard g(myDeviceIdxOnProcess_);
 
-  c10::ScalarType dtype = input.scalar_type();
-  size_t elementSizeInBytes = input.element_size();
-
   at::cuda::CUDAEvent reduceScatterToCollectEvent;
   at::cuda::CUDAEvent collectToAddEvent;
 
@@ -617,17 +601,10 @@ void DeviceFairring::reduceScatterOneSlice(
       input.numel() == output.numel() * numDevicesPerMachine_ * numMachines_);
   at::Tensor input3d;
   if (deviceGlobalRankIsFavorable_) {
-    input3d = input.view(
-        {static_cast<long>(numDevicesPerMachine_),
-         static_cast<long>(numMachines_),
-         -1});
+    input3d = input.view({numDevicesPerMachine_, numMachines_, -1});
   } else {
-    input3d = input
-                  .view(
-                      {static_cast<long>(numMachines_),
-                       static_cast<long>(numDevicesPerMachine_),
-                       -1})
-                  .transpose(0, 1);
+    input3d =
+        input.view({numMachines_, numDevicesPerMachine_, -1}).transpose(0, 1);
   }
 
   MY_CHECK(numDevicesPerMachine_ >= 2);
@@ -685,9 +662,6 @@ void DeviceFairring::allGatherOneSlice(
     at::cuda::CUDAEvent initialEvent) {
   c10::cuda::CUDAGuard g(myDeviceIdxOnProcess_);
 
-  c10::ScalarType dtype = input.scalar_type();
-  size_t elementSizeInBytes = input.element_size();
-
   at::cuda::CUDAEvent diffuseToAllGatherEvent;
 
   MY_CHECK(output.numel() % (numDevicesPerMachine_ * numMachines_) == 0);
@@ -695,17 +669,10 @@ void DeviceFairring::allGatherOneSlice(
       output.numel() == input.numel() * numDevicesPerMachine_ * numMachines_);
   at::Tensor output3d;
   if (deviceGlobalRankIsFavorable_) {
-    output3d = output.view(
-        {static_cast<long>(numDevicesPerMachine_),
-         static_cast<long>(numMachines_),
-         -1});
+    output3d = output.view({numDevicesPerMachine_, numMachines_, -1});
   } else {
-    output3d = output
-                   .view(
-                       {static_cast<long>(numMachines_),
-                        static_cast<long>(numDevicesPerMachine_),
-                        -1})
-                   .transpose(0, 1);
+    output3d =
+        output.view({numMachines_, numDevicesPerMachine_, -1}).transpose(0, 1);
   }
 
   initialEvent.block(diffuseStream_);

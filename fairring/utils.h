@@ -151,7 +151,7 @@ inline std::vector<NcclComm> createManyNcclComms(
     c10::cuda::CUDAGuard g(devices[deviceOffset]);
     // std::ostringstream oss;
     // oss << "Initing NCCL on rank " << rankStart + deviceOffset << "/" <<
-    // worldSize << " with unique ID "; for (size_t offset = 0; offset <
+    // worldSize << " with unique ID "; for (int64_t offset = 0; offset <
     // sizeof(ncclUniqueId); offset += 1) {
     //   oss << std::hex << std::setw(2) << std::setfill('0') <<
     //   static_cast<uint64_t>(*(reinterpret_cast<uint8_t*>(&uniqueId) +
@@ -265,31 +265,31 @@ inline constexpr T roundUpToNearestMultiple(T val, T factor) {
 // Each shard/slot/slice must contain a whole number of elements, whether they
 // are halfs, floats or doubles. We thus align them to (a multiple of) this
 // number of bytes, which is the size of doubles, the largest data type.
-static constexpr size_t kAlignment = 8;
+static constexpr int64_t kAlignment = 8;
 
 struct Layout {
-  size_t slotSizeInBytes;
-  size_t sliceSizeInBytes;
-  size_t numPaddingSlots;
-  size_t numStagingSlots;
+  int64_t slotSizeInBytes;
+  int64_t sliceSizeInBytes;
+  int64_t numPaddingSlots;
+  int64_t numStagingSlots;
 };
 
 inline Layout computeLayout(
-    size_t maxMemoryAllocatedInBytes,
-    size_t maxPaddingAllocatedInBytes,
-    size_t minParallelism,
-    size_t numMachines,
-    size_t numDevicesPerMachine) {
-  size_t onePaddingSizeInBytes =
+    int64_t maxMemoryAllocatedInBytes,
+    int64_t maxPaddingAllocatedInBytes,
+    int64_t minParallelism,
+    int64_t numMachines,
+    int64_t numDevicesPerMachine) {
+  int64_t onePaddingSizeInBytes =
       numDevicesPerMachine * numMachines * kAlignment;
-  size_t numPaddingSlots = maxPaddingAllocatedInBytes / onePaddingSizeInBytes;
+  int64_t numPaddingSlots = maxPaddingAllocatedInBytes / onePaddingSizeInBytes;
   MY_CHECK(minParallelism <= numPaddingSlots);
 
-  size_t sliceSizeInBytes = std::numeric_limits<size_t>::max();
-  size_t slotSizeInBytes = 0;
-  size_t numStagingSlots = 0;
+  int64_t sliceSizeInBytes = std::numeric_limits<int64_t>::max();
+  int64_t slotSizeInBytes = 0;
+  int64_t numStagingSlots = 0;
   if (numDevicesPerMachine == 1) {
-    size_t paddingMemoryInBytes =
+    int64_t paddingMemoryInBytes =
         2 * minParallelism * numDevicesPerMachine * numMachines * kAlignment;
     MY_CHECK(paddingMemoryInBytes <= maxMemoryAllocatedInBytes);
     slotSizeInBytes = roundDownToNearestMultiple(
@@ -303,7 +303,7 @@ inline Layout computeLayout(
   LOG(WARNING) << "The Fairring process group will achieve a parallelism of "
                << numPaddingSlots << (numStagingSlots == 0 ? "+" : "")
                << " and its slice size is "
-               << (sliceSizeInBytes == std::numeric_limits<size_t>::max()
+               << (sliceSizeInBytes == std::numeric_limits<int64_t>::max()
                        ? "infinite"
                        : std::to_string(sliceSizeInBytes));
 
@@ -358,7 +358,8 @@ inline at::Tensor unUnbind(const std::vector<at::Tensor>& ts) {
     MY_CHECK(t.numel() == ts[0].numel());
     MY_CHECK(t.storage() == ts[0].storage());
     MY_CHECK(
-        t.storage_offset() == ts[0].storage_offset() + idx * ts[0].numel());
+        t.storage_offset() ==
+        ts[0].storage_offset() + static_cast<int64_t>(idx) * ts[0].numel());
     MY_CHECK(t.key_set() == ts[0].key_set());
     MY_CHECK(t.dtype() == ts[0].dtype());
   }
@@ -368,7 +369,8 @@ inline at::Tensor unUnbind(const std::vector<at::Tensor>& ts) {
       ts[0].key_set(),
       ts[0].dtype());
   catTImpl->set_storage_offset(ts[0].storage_offset());
-  catTImpl->set_sizes_contiguous({ts[0].numel() * ts.size()});
+  catTImpl->set_sizes_contiguous(
+      {ts[0].numel() * static_cast<int64_t>(ts.size())});
   return at::Tensor(std::move(catTImpl));
 }
 

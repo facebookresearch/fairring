@@ -25,7 +25,12 @@ PYBIND11_MODULE(_fairring, module) {
       fairring::ProcessGroupFairring::OptionsFairring,
       c10d::ProcessGroup::Options>(processGroupFairring, "Options")
       .def(
-          py::init<size_t, size_t, size_t, bool, std::chrono::milliseconds>(),
+          py::init<
+              int64_t,
+              int64_t,
+              int64_t,
+              bool,
+              std::chrono::milliseconds>(),
           py::arg("max_memory_allocated_in_bytes"),
           py::arg("max_padding_allocated_in_bytes"),
           py::arg("min_parallelism"),

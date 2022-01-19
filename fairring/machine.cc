@@ -42,9 +42,9 @@ MachineFairring::MachineFairring(
     int rank,
     int size,
     std::vector<c10::Device> devices,
-    size_t maxMemoryAllocatedInBytes,
-    size_t maxPaddingAllocatedInBytes,
-    size_t minParallelism)
+    int64_t maxMemoryAllocatedInBytes,
+    int64_t maxPaddingAllocatedInBytes,
+    int64_t minParallelism)
     : devices_(std::move(devices)) {
   TORCH_CHECK(0 <= rank && rank < size);
   std::string machineId = getBootID().value();
@@ -58,13 +58,13 @@ MachineFairring::MachineFairring(
       integerToByteVector(numDevices));
 
   struct Machine {
-    size_t idx = 0;
-    size_t totalDevices = 0;
+    int64_t idx = 0;
+    int64_t totalDevices = 0;
   };
   std::unordered_map<std::string, Machine> idToMachine;
   struct Device {
-    size_t machineIdx = 0;
-    size_t idxWithinMachine = 0;
+    int64_t machineIdx = 0;
+    int64_t idxWithinMachine = 0;
   };
   std::vector<Device> allDevices;
   int64_t idxOfMyMachine = -1;
@@ -76,7 +76,7 @@ MachineFairring::MachineFairring(
         store->get("rdv/" + std::to_string(otherRank) + "/num_devices"));
     auto iter = idToMachine.find(otherMachineId);
     if (iter == idToMachine.end()) {
-      size_t newMachineIdx = idToMachine.size();
+      int64_t newMachineIdx = idToMachine.size();
       std::tie(iter, std::ignore) =
           idToMachine.emplace(otherMachineId, Machine{.idx = newMachineIdx});
     }
@@ -96,35 +96,29 @@ MachineFairring::MachineFairring(
   TORCH_CHECK(!idToMachine.empty());
   TORCH_CHECK(idxOfMyMachine >= 0);
   TORCH_CHECK(idxOfMyFirstDevice >= 0);
-  size_t numMachines = idToMachine.size();
-  size_t devicesPerMachine = idToMachine.begin()->second.totalDevices;
+  int64_t numMachines = idToMachine.size();
+  int64_t devicesPerMachine = idToMachine.begin()->second.totalDevices;
   for (const auto& kv : idToMachine) {
     TORCH_CHECK(kv.second.totalDevices == devicesPerMachine);
   }
 
-  at::Tensor deviceGlobalRankAssignment = at::empty(
-      {static_cast<long>(numMachines), static_cast<long>(devicesPerMachine)},
-      at::kLong);
+  at::Tensor deviceGlobalRankAssignment =
+      at::empty({numMachines, devicesPerMachine}, at::kLong);
   for (const auto deviceGlobalRank :
        c10::irange(numMachines * devicesPerMachine)) {
     const Device& device = allDevices[deviceGlobalRank];
     deviceGlobalRankAssignment[device.machineIdx][device.idxWithinMachine] =
-        static_cast<long>(deviceGlobalRank);
+        deviceGlobalRank;
   }
   bool deviceGlobalRankIsFavorable;
   if (deviceGlobalRankAssignment.equal(
-          torch::arange(static_cast<long>(numMachines * devicesPerMachine))
-              .view(
-                  {static_cast<long>(devicesPerMachine),
-                   static_cast<long>(numMachines)})
+          torch::arange(numMachines * devicesPerMachine)
+              .view({devicesPerMachine, numMachines})
               .transpose(0, 1))) {
     deviceGlobalRankIsFavorable = true;
   } else if (deviceGlobalRankAssignment.equal(
-                 torch::arange(
-                     static_cast<long>(numMachines * devicesPerMachine))
-                     .view(
-                         {static_cast<long>(numMachines),
-                          static_cast<long>(devicesPerMachine)}))) {
+                 torch::arange(numMachines * devicesPerMachine)
+                     .view({numMachines, devicesPerMachine}))) {
     deviceGlobalRankIsFavorable = false;
   } else {
     MY_CHECK(false);

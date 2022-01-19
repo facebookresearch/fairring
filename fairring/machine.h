@@ -29,9 +29,9 @@ class MachineFairring {
       int rank,
       int size,
       std::vector<c10::Device> devices,
-      size_t maxMemoryAllocatedInBytes,
-      size_t maxPaddingAllocatedInBytes,
-      size_t minParallelism);
+      int64_t maxMemoryAllocatedInBytes,
+      int64_t maxPaddingAllocatedInBytes,
+      int64_t minParallelism);
 
   ~MachineFairring();
 
@@ -54,7 +54,7 @@ class MachineFairring {
   std::vector<std::unique_ptr<DeviceFairring>> nodes_;
   std::vector<c10::Device> devices_;
   std::vector<CudaStream> streams_;
-  std::unordered_map<c10::Device, size_t> deviceToOffset_;
+  std::unordered_map<c10::Device, int64_t> deviceToOffset_;
 
   c10::intrusive_ptr<c10::ivalue::Future> mergeMultiDeviceFutures(
       c10::List<c10::intrusive_ptr<c10::ivalue::Future>> futures);

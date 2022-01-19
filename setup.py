@@ -36,6 +36,8 @@ def get_version():
     return f"{today}+git{git_hash}{'.dirty' if is_dirty else ''}"
 
 
+use_system_nccl = bool(int(os.environ.get("USE_SYSTEM_NCCL", "0")))
+
 setup(
     name="fairring",
     version=get_version(),
@@ -49,7 +51,7 @@ setup(
                 "fairring/process_group.cc",
             ],
             include_dirs=[get_my_dir()],
-            libraries=["nccl_static"],
+            libraries=["nccl" if use_system_nccl else "nccl_static"],
             extra_compile_args={
                 "cxx": [
                     "-g",
@@ -67,7 +69,7 @@ setup(
             # symbol advertised by this extension is the Python entrypoint. It
             # means that in the final process there will two copies of NCCL and
             # TensorPipe loaded into memory, but that's probably fine.
-            extra_link_args=["-Wl,--version-script=version.map"],
+            extra_link_args=[] if use_system_nccl else ["-Wl,--version-script=version.map"],
             export_symbols=["PyInit__fairring"],
             # To work around https://github.com/pytorch/pytorch/issues/65918.
             define_macros=[("USE_C10D_NCCL", None)],

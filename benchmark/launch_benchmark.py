@@ -23,7 +23,7 @@ from utils import recv_from_connections_and_join_processes
 import benchmark_fairring  # isort: skip
 
 
-def run_nccl_client(
+def run_one_device(
     init_method: str,
     machine_idx: int,
     device_idx: int,
@@ -96,7 +96,7 @@ def run_nccl_client(
     # prof.export_chrome_trace(f"{trace_file}_{machine_idx}_{device_idx}")
 
 
-def run_one_machine_nccl(
+def run_one_machine(
     init_method: str,
     machine_idx: int,
     num_machines: int,
@@ -113,13 +113,13 @@ def run_one_machine_nccl(
     receiving_conns = []
     sending_conns = []
     for _ in range(num_devices_per_machine):
-        recv_end, send_end = multiprocessing.Pipe()
+        recv_end, send_end = multiprocessing.get_context("spawn").Pipe()
         receiving_conns.append(recv_end)
         sending_conns.append(send_end)
     clients = [
-        multiprocessing.Process(
-            target=run_nccl_client,
-            name=f"client_{machine_idx}_{device_idx}",
+        multiprocessing.get_context("spawn").Process(
+            target=run_one_device,
+            name=f"machine{machine_idx}_device{device_idx}",
             args=(
                 init_method,
                 machine_idx,
@@ -152,7 +152,7 @@ def run_one_machine_nccl(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="NCCL allreduce benchmark")
+    parser = argparse.ArgumentParser(description="all-reduce benchmark")
     parser.add_argument(
         "--init-method",
         type=str,
@@ -226,7 +226,7 @@ def main():
 
     args = parser.parse_args()
 
-    res = run_one_machine_nccl(
+    res = run_one_machine(
         init_method=args.init_method,
         machine_idx=args.machine_idx,
         num_machines=args.num_machines,

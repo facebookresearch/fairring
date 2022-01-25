@@ -42,6 +42,7 @@ auto makeManyCudaEvents(int n, T... args) {
 void doReduceScatter(
     at::Tensor t,
     int64_t myRank,
+    c10d::ReduceOp opType,
     NcclComm& comm,
     CudaStream& stream) {
   MY_CHECK(t.layout() == at::kStrided);
@@ -57,7 +58,7 @@ void doReduceScatter(
         t[myRank].data_ptr(),
         t[myRank].numel(),
         torchToNcclDtype(t.scalar_type()),
-        ncclSum,
+        torchToNcclRedOp(opType),
         comm.get(),
         stream));
   } else {
@@ -70,7 +71,7 @@ void doReduceScatter(
           t[idx][myRank].data_ptr(),
           t[idx][myRank].numel(),
           torchToNcclDtype(t.scalar_type()),
-          ncclSum,
+          torchToNcclRedOp(opType),
           comm.get(),
           stream));
     }
@@ -110,6 +111,31 @@ void doCollect(
         otherRank,
         comm.get(),
         stream));
+  }
+}
+
+void doReduction(
+    at::Tensor operand,
+    at::Tensor result,
+    c10d::ReduceOp opType,
+    int64_t myRank,
+    CudaStream& stream) {
+  MY_CHECK(operand.layout() == at::kStrided);
+  MY_CHECK(result.layout() == at::kStrided);
+  MY_CHECK(operand.dim() >= 1);
+  MY_CHECK((0 <= myRank) && (myRank < operand.size(0)));
+  MY_CHECK(result.sizes() == operand[0].sizes());
+  MY_CHECK(result.strides() == operand[0].strides());
+  if (operand.numel() == 0) {
+    return;
+  }
+  c10::cuda::CUDAStreamGuard g(stream);
+  if (opType == c10d::ReduceOp::SUM) {
+    at::sum_out(result, operand, {0});
+  } else if (opType == c10d::ReduceOp::MAX) {
+    at::amax_out(result, operand, {0});
+  } else {
+    MY_CHECK(false);
   }
 }
 
@@ -283,6 +309,7 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::allReduce(
               {c10::Device(c10::kCUDA, myDeviceIdxOnProcess_)}));
 
   cmdQueue_.enqueue([this,
+                     opType,
                      tensor = std::move(tensor),
                      initialEvent = std::make_shared<at::cuda::CUDAEvent>(
                          std::move(initialEvent)),
@@ -304,6 +331,7 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::allReduce(
           : c10::intrusive_ptr<c10::ivalue::Future>();
       try {
         allReduceOneSlice(
+            opType,
             std::move(slice),
             sliceIdx == 0
                 ? c10::optional<at::cuda::CUDAEvent>(std::move(*initialEvent))
@@ -327,6 +355,7 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::allReduce(
 }
 
 c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::reduceScatter(
+    c10d::ReduceOp opType,
     at::Tensor input,
     at::Tensor output) {
   // Because reduce-scatter cannot be sliced
@@ -342,6 +371,7 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::reduceScatter(
               {c10::Device(c10::kCUDA, myDeviceIdxOnProcess_)}));
 
   cmdQueue_.enqueue([this,
+                     opType,
                      input = std::move(input),
                      output = std::move(output),
                      initialEvent = std::make_shared<at::cuda::CUDAEvent>(
@@ -350,7 +380,7 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::reduceScatter(
     MY_CHECK(kAlignment % input.element_size() == 0);
     int64_t seqNum = nextSlot_++;
     try {
-      reduceScatterOneSlice(input, output, std::move(*initialEvent));
+      reduceScatterOneSlice(opType, input, output, std::move(*initialEvent));
       c10::cuda::CUDAStreamGuard g(addStream_);
       future->markCompleted(std::vector<at::Tensor>{output});
     } catch (const std::exception& e) {
@@ -403,6 +433,7 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::allGather(
 }
 
 void DeviceFairring::allReduceOneSlice(
+    c10d::ReduceOp opType,
     at::Tensor slice,
     c10::optional<at::cuda::CUDAEvent> initialEvent) {
   c10::cuda::CUDAGuard g(myDeviceIdxOnProcess_);
@@ -485,12 +516,14 @@ void DeviceFairring::allReduceOneSlice(
     doReduceScatter(
         slice3d,
         myDeviceIdxOnMachine_,
+        opType,
         reduceScatterComm_,
         reduceScatterStream_);
     if (padding) {
       doReduceScatter(
           *padding,
           myDeviceIdxOnMachine_,
+          opType,
           reduceScatterComm_,
           reduceScatterStream_);
     }
@@ -525,15 +558,19 @@ void DeviceFairring::allReduceOneSlice(
 
   collectToAddEvent.block(addStream_);
   if (numMachines_ > 1) {
-    c10::cuda::CUDAStreamGuard g(addStream_);
-    // sum_out wants its first argument to be an lvalue (for no good reason)
-    if (slice3d.numel() > 0) {
-      auto out = slice3d[myDeviceIdxOnMachine_][myMachineIdx_];
-      at::sum_out(out, slice3dStaging, {0});
-    }
+    doReduction(
+        slice3dStaging,
+        slice3d[myDeviceIdxOnMachine_][myMachineIdx_],
+        opType,
+        myMachineIdx_,
+        addStream_);
     if (padding) {
-      auto paddingOut = (*padding)[myDeviceIdxOnMachine_][myMachineIdx_];
-      at::sum_out(paddingOut, (*paddingStaging), {0});
+      doReduction(
+          *paddingStaging,
+          (*padding)[myDeviceIdxOnMachine_][myMachineIdx_],
+          opType,
+          myMachineIdx_,
+          addStream_);
     }
   }
   addToDiffuseEvent.record(addStream_);
@@ -588,6 +625,7 @@ void DeviceFairring::allReduceOneSlice(
 }
 
 void DeviceFairring::reduceScatterOneSlice(
+    c10d::ReduceOp opType,
     at::Tensor input,
     at::Tensor output,
     at::cuda::CUDAEvent initialEvent) {
@@ -620,7 +658,7 @@ void DeviceFairring::reduceScatterOneSlice(
         output.data_ptr(),
         output.numel(),
         torchToNcclDtype(output.scalar_type()),
-        ncclSum,
+        torchToNcclRedOp(opType),
         reduceScatterComm_.get(),
         reduceScatterStream_));
   } else if (numDevicesPerMachine_ > 1) {
@@ -628,6 +666,7 @@ void DeviceFairring::reduceScatterOneSlice(
     doReduceScatter(
         input3d,
         myDeviceIdxOnMachine_,
+        opType,
         reduceScatterComm_,
         reduceScatterStream_);
     NCCL_CHECK(ncclGroupEnd());
@@ -649,10 +688,7 @@ void DeviceFairring::reduceScatterOneSlice(
 
   collectToAddEvent.block(addStream_);
   if (numMachines_ > 1) {
-    c10::cuda::CUDAStreamGuard g(addStream_);
-    if (input3d.numel() > 0) {
-      at::sum_out(output, input3dStaging, {0});
-    }
+    doReduction(input3dStaging, output, opType, myMachineIdx_, addStream_);
   }
 }
 

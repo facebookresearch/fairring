@@ -244,6 +244,17 @@ inline ncclDataType_t torchToNcclDtype(c10::ScalarType dtype) {
   }
 }
 
+inline ncclRedOp_t torchToNcclRedOp(c10d::ReduceOp opType) {
+  switch (opType) {
+    case c10d::ReduceOp::SUM:
+      return ncclSum;
+    case c10d::ReduceOp::MAX:
+      return ncclMax;
+    default:
+      MY_CHECK(false);
+  }
+}
+
 template <typename T>
 inline constexpr T ceilOfRatio(T num, T den) {
   if (num == 0) {

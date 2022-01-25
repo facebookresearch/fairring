@@ -45,6 +45,7 @@ class MachineFairring {
   };
 
   c10::intrusive_ptr<c10::ivalue::Future> reduceScatter(
+      c10d::ReduceOp opType,
       std::vector<TensorPair> tensors);
 
   c10::intrusive_ptr<c10::ivalue::Future> allGather(

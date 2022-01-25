@@ -223,7 +223,7 @@ c10::intrusive_ptr<c10::ivalue::Future> MachineFairring::allReduce(
     c10d::ReduceOp opType,
     std::vector<at::Tensor> tensors) {
   // FIXME Support more operation types
-  MY_CHECK(opType == c10d::ReduceOp::SUM);
+  MY_CHECK(opType == c10d::ReduceOp::SUM || opType == c10d::ReduceOp::MAX);
 
   MY_CHECK(tensors.size() == devices_.size());
   for (const auto deviceOffset : c10::irange(tensors.size())) {
@@ -242,7 +242,11 @@ c10::intrusive_ptr<c10::ivalue::Future> MachineFairring::allReduce(
 }
 
 c10::intrusive_ptr<c10::ivalue::Future> MachineFairring::reduceScatter(
+    c10d::ReduceOp opType,
     std::vector<TensorPair> tensors) {
+  // FIXME Support more operation types
+  MY_CHECK(opType == c10d::ReduceOp::SUM || opType == c10d::ReduceOp::MAX);
+
   MY_CHECK(tensors.size() == devices_.size());
   for (const auto deviceOffset : c10::irange(tensors.size())) {
     MY_CHECK(tensors[deviceOffset].output.device() == devices_[deviceOffset]);
@@ -254,7 +258,7 @@ c10::intrusive_ptr<c10::ivalue::Future> MachineFairring::reduceScatter(
   for (const auto idx : c10::irange(nodes_.size())) {
     const std::unique_ptr<DeviceFairring>& node = nodes_[idx];
     futures.push_back(
-        node->reduceScatter(tensors[idx].input, tensors[idx].output));
+        node->reduceScatter(opType, tensors[idx].input, tensors[idx].output));
   }
 
   return mergeMultiDeviceFutures(std::move(futures));

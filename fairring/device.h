@@ -44,6 +44,7 @@ class DeviceFairring {
       at::Tensor tensor);
 
   c10::intrusive_ptr<c10::ivalue::Future> reduceScatter(
+      c10d::ReduceOp opType,
       at::Tensor input,
       at::Tensor output);
 
@@ -87,10 +88,12 @@ class DeviceFairring {
   int64_t nextSlot_{0};
 
   void allReduceOneSlice(
+      c10d::ReduceOp opType,
       at::Tensor slice,
       c10::optional<at::cuda::CUDAEvent> initialEvent);
 
   void reduceScatterOneSlice(
+      c10d::ReduceOp opType,
       at::Tensor input,
       at::Tensor output,
       at::cuda::CUDAEvent initialEvent);

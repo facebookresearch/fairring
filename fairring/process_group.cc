@@ -367,7 +367,8 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
         minParallelism_);
   }
   return c10::make_intrusive<WorkFairring>(
-      c10d::OpType::REDUCE_SCATTER, machine_->reduceScatter(std::move(data)));
+      c10d::OpType::REDUCE_SCATTER,
+      machine_->reduceScatter(opts.reduceOp, std::move(data)));
 }
 
 c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
@@ -414,7 +415,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
   }
   return c10::make_intrusive<WorkFairring>(
       c10d::OpType::_REDUCE_SCATTER_BASE,
-      machine_->reduceScatter(std::move(data)));
+      machine_->reduceScatter(opts.reduceOp, std::move(data)));
 }
 
 c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::

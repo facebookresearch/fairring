@@ -37,18 +37,12 @@ c10::optional<std::string> getBootID() {
 
 namespace fairring {
 
-MachineFairring::MachineFairring(
+DeploymentInfo detectDeploymentInfo(
     c10::intrusive_ptr<c10d::Store> store,
     int rank,
     int size,
-    std::vector<c10::Device> devices,
-    int64_t maxMemoryAllocatedInBytes,
-    int64_t maxPaddingAllocatedInBytes,
-    int64_t minParallelism)
-    : devices_(std::move(devices)) {
-  TORCH_CHECK(0 <= rank && rank < size);
+    int64_t numDevices) {
   std::string machineId = getBootID().value();
-  int64_t numDevices = devices_.size();
   TORCH_CHECK(numDevices > 0);
   store->set(
       "rdv/" + std::to_string(rank) + "/machine_idx",
@@ -124,69 +118,110 @@ MachineFairring::MachineFairring(
     MY_CHECK(false);
   }
 
+  return DeploymentInfo{
+      .numDevices = numDevices,
+      .numMachines = numMachines,
+      .idxOfMyFirstDevice = idxOfMyFirstDevice,
+      .idxOfMyMachine = idxOfMyMachine,
+      .devicesPerMachine = devicesPerMachine,
+      .deviceGlobalRankIsFavorable = deviceGlobalRankIsFavorable};
+}
+
+MachineFairring::MachineFairring(
+    c10::intrusive_ptr<c10d::Store> store,
+    int rank,
+    int size,
+    std::vector<c10::Device> devices,
+    int64_t maxMemoryAllocatedInBytes,
+    int64_t maxPaddingAllocatedInBytes,
+    int64_t minParallelism)
+    : devices_(std::move(devices)) {
+  TORCH_CHECK(0 <= rank && rank < size);
+  deploymentInfo_ = detectDeploymentInfo(store, rank, size, devices_.size());
+
   ncclUniqueId reduceScatterUniqueId;
   ncclUniqueId allGatherUniqueId;
-  if (idxOfMyFirstDevice == 0) {
+  if (deploymentInfo_.idxOfMyFirstDevice == 0) {
     NCCL_CHECK(ncclGetUniqueId(&reduceScatterUniqueId));
     NCCL_CHECK(ncclGetUniqueId(&allGatherUniqueId));
     store->set(
-        "machines/" + std::to_string(idxOfMyMachine) +
+        "machines/" + std::to_string(deploymentInfo_.idxOfMyMachine) +
             "/reduce_scatter_nccl_id",
         podToByteString(reduceScatterUniqueId));
     store->set(
-        "machines/" + std::to_string(idxOfMyMachine) + "/all_gather_nccl_id",
+        "machines/" + std::to_string(deploymentInfo_.idxOfMyMachine) +
+            "/all_gather_nccl_id",
         podToByteString(allGatherUniqueId));
   } else {
     reduceScatterUniqueId = byteStringToPod<ncclUniqueId>(store->get(
-        "machines/" + std::to_string(idxOfMyMachine) +
+        "machines/" + std::to_string(deploymentInfo_.idxOfMyMachine) +
         "/reduce_scatter_nccl_id"));
     allGatherUniqueId = byteStringToPod<ncclUniqueId>(store->get(
-        "machines/" + std::to_string(idxOfMyMachine) + "/all_gather_nccl_id"));
+        "machines/" + std::to_string(deploymentInfo_.idxOfMyMachine) +
+        "/all_gather_nccl_id"));
   }
   std::vector<NcclComm> reduceScatterComms = createManyNcclComms(
-      idxOfMyFirstDevice, devices_, devicesPerMachine, reduceScatterUniqueId);
+      deploymentInfo_.idxOfMyFirstDevice,
+      devices_,
+      deploymentInfo_.devicesPerMachine,
+      reduceScatterUniqueId);
   std::vector<NcclComm> allGatherComms = createManyNcclComms(
-      idxOfMyFirstDevice, devices_, devicesPerMachine, allGatherUniqueId);
+      deploymentInfo_.idxOfMyFirstDevice,
+      devices_,
+      deploymentInfo_.devicesPerMachine,
+      allGatherUniqueId);
 
   std::vector<NcclComm> collectComms;
   std::vector<NcclComm> diffuseComms;
-  for (const auto deviceOffset : c10::irange(numDevices)) {
+  for (const auto deviceOffset : c10::irange(deploymentInfo_.numDevices)) {
     ncclUniqueId collectUniqueId;
     ncclUniqueId diffuseUniqueId;
-    if (idxOfMyMachine == 0) {
+    if (deploymentInfo_.idxOfMyMachine == 0) {
       NCCL_CHECK(ncclGetUniqueId(&collectUniqueId));
       NCCL_CHECK(ncclGetUniqueId(&diffuseUniqueId));
       store->set(
-          "devices/" + std::to_string(idxOfMyFirstDevice + deviceOffset) +
+          "devices/" +
+              std::to_string(
+                  deploymentInfo_.idxOfMyFirstDevice + deviceOffset) +
               "/collect_nccl_id",
           podToByteString(collectUniqueId));
       store->set(
-          "devices/" + std::to_string(idxOfMyFirstDevice + deviceOffset) +
+          "devices/" +
+              std::to_string(
+                  deploymentInfo_.idxOfMyFirstDevice + deviceOffset) +
               "/diffuse_nccl_id",
           podToByteString(diffuseUniqueId));
     } else {
       collectUniqueId = byteStringToPod<ncclUniqueId>(store->get(
-          "devices/" + std::to_string(idxOfMyFirstDevice + deviceOffset) +
+          "devices/" +
+          std::to_string(deploymentInfo_.idxOfMyFirstDevice + deviceOffset) +
           "/collect_nccl_id"));
       diffuseUniqueId = byteStringToPod<ncclUniqueId>(store->get(
-          "devices/" + std::to_string(idxOfMyFirstDevice + deviceOffset) +
+          "devices/" +
+          std::to_string(deploymentInfo_.idxOfMyFirstDevice + deviceOffset) +
           "/diffuse_nccl_id"));
     }
     collectComms.push_back(createOneNcclComm(
-        idxOfMyMachine, devices_[deviceOffset], numMachines, collectUniqueId));
+        deploymentInfo_.idxOfMyMachine,
+        devices_[deviceOffset],
+        deploymentInfo_.numMachines,
+        collectUniqueId));
     diffuseComms.push_back(createOneNcclComm(
-        idxOfMyMachine, devices_[deviceOffset], numMachines, diffuseUniqueId));
+        deploymentInfo_.idxOfMyMachine,
+        devices_[deviceOffset],
+        deploymentInfo_.numMachines,
+        diffuseUniqueId));
   }
 
-  nodes_.reserve(numDevices);
-  for (const auto deviceOffset : c10::irange(numDevices)) {
+  nodes_.reserve(deploymentInfo_.numDevices);
+  for (const auto deviceOffset : c10::irange(deploymentInfo_.numDevices)) {
     nodes_.push_back(std::make_unique<DeviceFairring>(
         devices_[deviceOffset].index(),
-        idxOfMyMachine,
-        idxOfMyFirstDevice + deviceOffset,
-        numMachines,
-        devicesPerMachine,
-        deviceGlobalRankIsFavorable,
+        deploymentInfo_.idxOfMyMachine,
+        deploymentInfo_.idxOfMyFirstDevice + deviceOffset,
+        deploymentInfo_.numMachines,
+        deploymentInfo_.devicesPerMachine,
+        deploymentInfo_.deviceGlobalRankIsFavorable,
         store,
         std::move(reduceScatterComms[deviceOffset]),
         std::move(collectComms[deviceOffset]),
@@ -197,8 +232,8 @@ MachineFairring::MachineFairring(
         minParallelism));
   }
 
-  streams_.reserve(numDevices);
-  for (const auto deviceOffset : c10::irange(numDevices)) {
+  streams_.reserve(deploymentInfo_.numDevices);
+  for (const auto deviceOffset : c10::irange(deploymentInfo_.numDevices)) {
     streams_.emplace_back(devices_[deviceOffset].index());
     deviceToOffset_.emplace(devices_[deviceOffset], deviceOffset);
   }

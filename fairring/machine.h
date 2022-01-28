@@ -22,6 +22,21 @@ namespace fairring {
 
 class DeviceFairring;
 
+struct DeploymentInfo {
+  int64_t numDevices;
+  int64_t numMachines;
+  int64_t idxOfMyFirstDevice;
+  int64_t idxOfMyMachine;
+  int64_t devicesPerMachine;
+  int64_t deviceGlobalRankIsFavorable;
+};
+
+DeploymentInfo detectDeploymentInfo(
+    c10::intrusive_ptr<c10d::Store> store,
+    int rank,
+    int size,
+    int64_t numDevices);
+
 class MachineFairring {
  public:
   MachineFairring(
@@ -52,6 +67,7 @@ class MachineFairring {
       std::vector<TensorPair> tensors);
 
  private:
+  DeploymentInfo deploymentInfo_;
   std::vector<std::unique_ptr<DeviceFairring>> nodes_;
   std::vector<c10::Device> devices_;
   std::vector<CudaStream> streams_;

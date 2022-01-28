@@ -29,13 +29,25 @@ class DeviceFairring {
       int64_t numDevicesPerMachine,
       int64_t deviceGlobalRankIsFavorable,
       c10::intrusive_ptr<c10d::Store> store,
-      NcclComm reduceScatterComm,
-      NcclComm collectComm,
-      NcclComm diffuseComm,
-      NcclComm allGatherComm,
       int64_t maxMemoryAllocatedInBytes,
       int64_t maxPaddingAllocatedInBytes,
       int64_t minParallelism);
+
+  void setReduceScatterComm(NcclComm reduceScatterComm) {
+    reduceScatterComm_ = std::move(reduceScatterComm);
+  }
+
+  void setCollectComm(NcclComm collectComm) {
+    collectComm_ = std::move(collectComm);
+  }
+
+  void setDiffuseComm(NcclComm diffuseComm) {
+    diffuseComm_ = std::move(diffuseComm);
+  }
+
+  void setAllGatherComm(NcclComm allGatherComm) {
+    allGatherComm_ = std::move(allGatherComm);
+  }
 
   ~DeviceFairring();
 

@@ -139,11 +139,6 @@ MachineFairring::MachineFairring(
   TORCH_CHECK(0 <= rank && rank < size);
   deploymentInfo_ = detectDeploymentInfo(store_, rank, size, devices_.size());
 
-  std::vector<NcclComm> reduceScatterComms = establishReduceScatterComms();
-  std::vector<NcclComm> collectComms = establishCollectComms();
-  std::vector<NcclComm> diffuseComms = establishDiffuseComms();
-  std::vector<NcclComm> allGatherComms = establishAllGatherComms();
-
   nodes_.reserve(deploymentInfo_.numDevices);
   for (const auto deviceOffset : c10::irange(deploymentInfo_.numDevices)) {
     nodes_.push_back(std::make_unique<DeviceFairring>(
@@ -154,10 +149,6 @@ MachineFairring::MachineFairring(
         deploymentInfo_.devicesPerMachine,
         deploymentInfo_.deviceGlobalRankIsFavorable,
         store,
-        std::move(reduceScatterComms[deviceOffset]),
-        std::move(collectComms[deviceOffset]),
-        std::move(diffuseComms[deviceOffset]),
-        std::move(allGatherComms[deviceOffset]),
         maxMemoryAllocatedInBytes,
         maxPaddingAllocatedInBytes,
         minParallelism));
@@ -196,6 +187,11 @@ c10::intrusive_ptr<c10::ivalue::Future> MachineFairring::allReduce(
     MY_CHECK(tensors[deviceOffset].device() == devices_[deviceOffset]);
   }
 
+  ensureReduceScatterCommsEstablished();
+  ensureCollectCommsEstablished();
+  ensureDiffuseCommsEstablished();
+  ensureAllGatherCommsEstablished();
+
   c10::List<c10::intrusive_ptr<c10::ivalue::Future>> futures(
       c10::ListType::ofTensors());
   futures.reserve(nodes_.size());
@@ -218,6 +214,9 @@ c10::intrusive_ptr<c10::ivalue::Future> MachineFairring::reduceScatter(
     MY_CHECK(tensors[deviceOffset].output.device() == devices_[deviceOffset]);
   }
 
+  ensureReduceScatterCommsEstablished();
+  ensureCollectCommsEstablished();
+
   c10::List<c10::intrusive_ptr<c10::ivalue::Future>> futures(
       c10::ListType::ofTensors());
   futures.reserve(nodes_.size());
@@ -236,6 +235,9 @@ c10::intrusive_ptr<c10::ivalue::Future> MachineFairring::allGather(
   for (const auto deviceOffset : c10::irange(tensors.size())) {
     MY_CHECK(tensors[deviceOffset].input.device() == devices_[deviceOffset]);
   }
+
+  ensureDiffuseCommsEstablished();
+  ensureAllGatherCommsEstablished();
 
   c10::List<c10::intrusive_ptr<c10::ivalue::Future>> futures(
       c10::ListType::ofTensors());
@@ -379,6 +381,46 @@ std::vector<NcclComm> MachineFairring::establishAllGatherComms() {
       devices_,
       deploymentInfo_.devicesPerMachine,
       allGatherUniqueId);
+}
+
+void MachineFairring::ensureReduceScatterCommsEstablished() {
+  if (!establishedReduceScatterComm_) {
+    std::vector<NcclComm> comms = establishReduceScatterComms();
+    for (const auto idx : c10::irange(nodes_.size())) {
+      nodes_[idx]->setReduceScatterComm(std::move(comms[idx]));
+    }
+    establishedReduceScatterComm_ = true;
+  }
+}
+
+void MachineFairring::ensureCollectCommsEstablished() {
+  if (!establishedCollectComm_) {
+    std::vector<NcclComm> comms = establishCollectComms();
+    for (const auto idx : c10::irange(nodes_.size())) {
+      nodes_[idx]->setCollectComm(std::move(comms[idx]));
+    }
+    establishedCollectComm_ = true;
+  }
+}
+
+void MachineFairring::ensureDiffuseCommsEstablished() {
+  if (!establishedDiffuseComm_) {
+    std::vector<NcclComm> comms = establishDiffuseComms();
+    for (const auto idx : c10::irange(nodes_.size())) {
+      nodes_[idx]->setDiffuseComm(std::move(comms[idx]));
+    }
+    establishedDiffuseComm_ = true;
+  }
+}
+
+void MachineFairring::ensureAllGatherCommsEstablished() {
+  if (!establishedAllGatherComm_) {
+    std::vector<NcclComm> comms = establishAllGatherComms();
+    for (const auto idx : c10::irange(nodes_.size())) {
+      nodes_[idx]->setAllGatherComm(std::move(comms[idx]));
+    }
+    establishedAllGatherComm_ = true;
+  }
 }
 
 } // namespace fairring

@@ -74,13 +74,23 @@ class MachineFairring {
   std::vector<CudaStream> streams_;
   std::unordered_map<c10::Device, int64_t> deviceToOffset_;
 
-  c10::intrusive_ptr<c10::ivalue::Future> mergeMultiDeviceFutures(
-      c10::List<c10::intrusive_ptr<c10::ivalue::Future>> futures);
+  bool establishedReduceScatterComm_ = false;
+  bool establishedCollectComm_ = false;
+  bool establishedDiffuseComm_ = false;
+  bool establishedAllGatherComm_ = false;
 
   std::vector<NcclComm> establishReduceScatterComms();
   std::vector<NcclComm> establishCollectComms();
   std::vector<NcclComm> establishDiffuseComms();
   std::vector<NcclComm> establishAllGatherComms();
+
+  void ensureReduceScatterCommsEstablished();
+  void ensureCollectCommsEstablished();
+  void ensureDiffuseCommsEstablished();
+  void ensureAllGatherCommsEstablished();
+
+  c10::intrusive_ptr<c10::ivalue::Future> mergeMultiDeviceFutures(
+      c10::List<c10::intrusive_ptr<c10::ivalue::Future>> futures);
 };
 
 } // namespace fairring

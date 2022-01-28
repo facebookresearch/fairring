@@ -67,6 +67,7 @@ class MachineFairring {
       std::vector<TensorPair> tensors);
 
  private:
+  c10::intrusive_ptr<c10d::Store> store_;
   DeploymentInfo deploymentInfo_;
   std::vector<std::unique_ptr<DeviceFairring>> nodes_;
   std::vector<c10::Device> devices_;
@@ -75,6 +76,11 @@ class MachineFairring {
 
   c10::intrusive_ptr<c10::ivalue::Future> mergeMultiDeviceFutures(
       c10::List<c10::intrusive_ptr<c10::ivalue::Future>> futures);
+
+  std::vector<NcclComm> establishReduceScatterComms();
+  std::vector<NcclComm> establishCollectComms();
+  std::vector<NcclComm> establishDiffuseComms();
+  std::vector<NcclComm> establishAllGatherComms();
 };
 
 } // namespace fairring

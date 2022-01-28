@@ -199,7 +199,7 @@ MachineFairring::MachineFairring(
 
   streams_.reserve(numDevices);
   for (const auto deviceOffset : c10::irange(numDevices)) {
-    streams_.emplace_back(deviceOffset);
+    streams_.emplace_back(devices_[deviceOffset].index());
     deviceToOffset_.emplace(devices_[deviceOffset], deviceOffset);
   }
 }

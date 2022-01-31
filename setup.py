@@ -17,7 +17,9 @@ def get_my_dir():
 
 
 def get_git_commit_hash():
-    result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=get_my_dir(), capture_output=True)
+    result = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], cwd=get_my_dir(), capture_output=True
+    )
     return result.stdout.decode("ascii").strip()
 
 

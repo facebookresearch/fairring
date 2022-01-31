@@ -33,13 +33,16 @@ def create_process_group_fairring(store, rank, size, timeout):
     except KeyError:
         min_parallelism = 16
     return _fairring.ProcessGroup(
-        store, rank, size, _fairring.ProcessGroup.Options(
+        store,
+        rank,
+        size,
+        _fairring.ProcessGroup.Options(
             max_memory_allocated_in_bytes=max_memory_allocated_in_bytes,
             max_padding_allocated_in_bytes=max_padding_allocated_in_bytes,
             min_parallelism=min_parallelism,
             is_high_priority_stream=True,
             timeout=timeout,
-        )
+        ),
     )
 
 

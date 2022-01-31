@@ -136,8 +136,6 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::broadcast(
 c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::allreduce(
     std::vector<at::Tensor>& data,
     const c10d::AllreduceOptions& opts) {
-  // return c10::make_intrusive<WorkFairring>(
-  //     c10d::OpType::ALLREDUCE, ncclPG_->allreduce(data, opts)->getFuture());
   for (at::Tensor& t : data) {
     MY_CHECK(t.layout() == at::kStrided);
     MY_CHECK(t.is_cuda());
@@ -188,9 +186,6 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::allgather(
     std::vector<std::vector<at::Tensor>>& outputTensors,
     std::vector<at::Tensor>& inputTensors,
     const c10d::AllgatherOptions& opts) {
-  // return c10::make_intrusive<WorkFairring>(
-  //     c10d::OpType::ALLGATHER,
-  //     ncclPG_->allgather(outputTensors, inputTensors, opts)->getFuture());
   MY_CHECK(inputTensors.size() == outputTensors.size());
   int64_t numDevicesPerRank = inputTensors.size();
   std::vector<fairring::MachineFairring::TensorPair> data;
@@ -244,9 +239,6 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
         at::Tensor& outputBuffer,
         at::Tensor& inputBuffer,
         const c10d::AllgatherOptions& opts) {
-  // return c10::make_intrusive<WorkFairring>(
-  //     c10d::OpType::_ALLGATHER_BASE,
-  //     ncclPG_->_allgather_base(outputBuffer, inputBuffer, opts)->getFuture());
   MY_CHECK(inputBuffer.layout() == at::kStrided);
   MY_CHECK(inputBuffer.is_cuda());
   MY_CHECK(inputBuffer.is_non_overlapping_and_dense());
@@ -318,10 +310,6 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
         std::vector<at::Tensor>& outputTensors,
         std::vector<std::vector<at::Tensor>>& inputTensors,
         const c10d::ReduceScatterOptions& opts) {
-  // return c10::make_intrusive<WorkFairring>(
-  //     c10d::OpType::REDUCE_SCATTER,
-  //     ncclPG_->reduce_scatter(outputTensors, inputTensors,
-  //     opts)->getFuture());
   MY_CHECK(inputTensors.size() == outputTensors.size());
   int64_t numDevicesPerRank = outputTensors.size();
   std::vector<fairring::MachineFairring::TensorPair> data;
@@ -376,10 +364,6 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
         at::Tensor& outputBuffer,
         at::Tensor& inputBuffer,
         const c10d::ReduceScatterOptions& opts) {
-  // return c10::make_intrusive<WorkFairring>(
-  //     c10d::OpType::_REDUCE_SCATTER_BASE,
-  //     ncclPG_->_reduce_scatter_base(outputBuffer, inputBuffer, opts)
-  //         ->getFuture());
   MY_CHECK(inputBuffer.layout() == at::kStrided);
   MY_CHECK(inputBuffer.is_cuda());
   MY_CHECK(inputBuffer.is_non_overlapping_and_dense());

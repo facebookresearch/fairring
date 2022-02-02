@@ -272,6 +272,15 @@ DeviceFairring::DeviceFairring(
               .dtype(c10::kByte)
               .device(c10::Device(c10::kCUDA, myDeviceIdxOnProcess_)))),
       stagingEvents_(makeManyCudaEvents(layout_.numStagingSlots)) {
+  for (const at::Tensor& t :
+       {paddingBuffer_, stagingBuffer_, paddingStagingBuffer_}) {
+    t.record_stream(reduceScatterStream_);
+    t.record_stream(collectStream_);
+    t.record_stream(addStream_);
+    t.record_stream(diffuseStream_);
+    t.record_stream(allGatherStream_);
+  }
+
   cmdThread_ = std::thread([this]() {
     while (true) {
       std::function<void()> fn = cmdQueue_.dequeue();
@@ -293,6 +302,12 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::allReduce(
     at::Tensor tensor) {
   at::cuda::CUDAEvent initialEvent;
   initialEvent.record(c10::cuda::getCurrentCUDAStream(myDeviceIdxOnProcess_));
+
+  tensor.record_stream(reduceScatterStream_);
+  tensor.record_stream(collectStream_);
+  tensor.record_stream(addStream_);
+  tensor.record_stream(diffuseStream_);
+  tensor.record_stream(allGatherStream_);
 
   c10::intrusive_ptr<c10::ivalue::Future> future =
       c10::make_intrusive<c10::ivalue::Future>(
@@ -356,6 +371,12 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::reduceScatter(
   at::cuda::CUDAEvent initialEvent;
   initialEvent.record(c10::cuda::getCurrentCUDAStream(myDeviceIdxOnProcess_));
 
+  for (const at::Tensor& t : {input, output}) {
+    t.record_stream(reduceScatterStream_);
+    t.record_stream(collectStream_);
+    t.record_stream(addStream_);
+  }
+
   c10::intrusive_ptr<c10::ivalue::Future> future =
       c10::make_intrusive<c10::ivalue::Future>(
           c10::ListType::ofTensors(),
@@ -394,6 +415,11 @@ c10::intrusive_ptr<c10::ivalue::Future> DeviceFairring::allGather(
 
   at::cuda::CUDAEvent initialEvent;
   initialEvent.record(c10::cuda::getCurrentCUDAStream(myDeviceIdxOnProcess_));
+
+  for (const at::Tensor& t : {input, output}) {
+    t.record_stream(diffuseStream_);
+    t.record_stream(allGatherStream_);
+  }
 
   c10::intrusive_ptr<c10::ivalue::Future> future =
       c10::make_intrusive<c10::ivalue::Future>(

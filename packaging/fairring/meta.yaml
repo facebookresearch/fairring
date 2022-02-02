@@ -4,7 +4,7 @@ package:
 
 source:
   - git_url: https://github.com/NVIDIA/nccl
-    git_rev: "v2.8.3-1"
+    git_rev: "v2.10.3-1"
     folder: nccl
   - git_url: https://github.com/facebookresearch/fairring
     git_rev: "v{{ FAIRRING_LATEST_TAG }}"
@@ -17,7 +17,6 @@ requirements:
     - pytorch-mutex 1.0 cuda
     - pytorch =={{ PYTORCH_VERSION }}
     - cudatoolkit >={{ CUDA_MAJOR_VERSION }}.{{ CUDA_MINOR_VERSION }},<{{ CUDA_MAJOR_VERSION }}.{{ (CUDA_MINOR_VERSION|int) + 1 }}
-    # - nccl >=2.8.3,<2.8.4
 
   run:
     - python

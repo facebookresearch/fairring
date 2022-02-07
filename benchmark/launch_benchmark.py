@@ -9,14 +9,11 @@ import argparse
 import contextlib
 import multiprocessing
 import os
-import shutil
 import sys
-import time
 from typing import List, Optional
 
 import torch
 import torch.distributed
-from torch.profiler import *
 from utils import recv_from_connections_and_join_processes
 
 # Must come after torch or else it will fail because it won't find libc10.so
@@ -75,6 +72,7 @@ def run_one_device(
     #     shutil.copyfile(f"/dev/shm/fairring_{machine_idx}_{device_idx}", f"{trace_file}-{device_idx}")
     #     os.remove(f"/dev/shm/fairring_{machine_idx}_{device_idx}")
 
+    # from torch.profiler import *
     # with profile(
     #     activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
     # ) as prof:

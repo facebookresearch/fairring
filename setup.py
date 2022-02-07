@@ -8,8 +8,8 @@
 import datetime
 import os
 import subprocess
-from setuptools import setup
 
+from setuptools import setup
 from torch.utils import cpp_extension
 
 

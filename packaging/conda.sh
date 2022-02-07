@@ -28,8 +28,8 @@ conda build -c defaults -c $CUDATOOLKIT_CHANNEL -c pytorch -c pytorch-test --no-
 conda install -yq anaconda-client
 anaconda -t "${ANACONDA_TOKEN}" upload -u fairring --label main --force --no-progress /opt/conda/conda-bld/linux-64/fairring-*.tar.bz2
 
-for version in `conda search --json "fairring[channel=fairring,build=${FAIRRING_BUILD}]" | python -c "import json, sys; d = json.load(sys.stdin); sys.stdout.write(''.join(p['version'] + '\n' for p in d['fairring']))"`; do
+for version in $(conda search --json "fairring[channel=fairring,build=${FAIRRING_BUILD}]" | python -c "import json, sys; d = json.load(sys.stdin); sys.stdout.write(''.join(p['version'] + '\n' for p in d['fairring']))"); do
   if [[ "$version" != "$FAIRRING_VERSION" ]]; then
-    anaconda -t "${ANACONDA_TOKEN}" remove --force fairring/fairring/${version}/linux-64/fairring-${version}-${FAIRRING_BUILD}.tar.bz2;
+    anaconda -t "${ANACONDA_TOKEN}" remove --force "fairring/fairring/${version}/linux-64/fairring-${version}-${FAIRRING_BUILD}.tar.bz2";
   fi
 done

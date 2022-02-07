@@ -174,13 +174,18 @@ class ProcessGroupFairring : public c10d::ProcessGroup {
       const c10d::BarrierOptions& opts = c10d::BarrierOptions()) override;
 
  private:
+  c10::intrusive_ptr<c10d::Store> store_;
+
+  bool isHighPriorityStream_;
   c10::intrusive_ptr<c10d::ProcessGroupNCCL> ncclPG_;
 
   int64_t maxMemoryAllocatedInBytes_;
   int64_t maxPaddingAllocatedInBytes_;
   int64_t minParallelism_;
-  c10::intrusive_ptr<c10d::Store> store_;
   std::unique_ptr<MachineFairring> machine_;
+
+  c10d::ProcessGroupNCCL& getNcclPG();
+  void initFairring(std::vector<c10::Device> devices);
 };
 
 } // namespace fairring

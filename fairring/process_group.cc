@@ -109,16 +109,11 @@ ProcessGroupFairring::ProcessGroupFairring(
     int size,
     c10::intrusive_ptr<OptionsFairring> options)
     : ProcessGroup(rank, size),
-      ncclPG_(c10::make_intrusive<c10d::ProcessGroupNCCL>(
-          c10::make_intrusive<c10d::PrefixStore>("nccl", store),
-          rank,
-          size,
-          c10d::ProcessGroupNCCL::Options::create(
-              options->isHighPriorityStream_))),
+      store_(std::move(store)),
+      isHighPriorityStream_(options->isHighPriorityStream_),
       maxMemoryAllocatedInBytes_(options->maxMemoryAllocatedInBytes_),
       maxPaddingAllocatedInBytes_(options->maxPaddingAllocatedInBytes_),
-      minParallelism_(options->minParallelism_),
-      store_(c10::make_intrusive<c10d::PrefixStore>("fairring", store)) {}
+      minParallelism_(options->minParallelism_) {}
 
 ProcessGroupFairring::~ProcessGroupFairring() {}
 
@@ -130,7 +125,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::broadcast(
     std::vector<at::Tensor>& data,
     const c10d::BroadcastOptions& opts) {
   return c10::make_intrusive<WorkFairring>(
-      c10d::OpType::BROADCAST, ncclPG_->broadcast(data, opts)->getFuture());
+      c10d::OpType::BROADCAST, getNcclPG().broadcast(data, opts)->getFuture());
 }
 
 c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::allreduce(
@@ -153,14 +148,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::allreduce(
     for (const c10::DeviceIndex& idx : deviceSet) {
       devices.emplace_back(c10::kCUDA, idx);
     }
-    machine_ = std::make_unique<fairring::MachineFairring>(
-        store_,
-        rank_,
-        size_,
-        std::move(devices),
-        maxMemoryAllocatedInBytes_,
-        maxPaddingAllocatedInBytes_,
-        minParallelism_);
+    initFairring(std::move(devices));
   }
   return c10::make_intrusive<WorkFairring>(
       c10d::OpType::ALLREDUCE, machine_->allReduce(opts.reduceOp, data));
@@ -172,14 +160,14 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
         const c10d::AllreduceCoalescedOptions& opts) {
   return c10::make_intrusive<WorkFairring>(
       c10d::OpType::ALLREDUCE_COALESCED,
-      ncclPG_->allreduce_coalesced(tensors, opts)->getFuture());
+      getNcclPG().allreduce_coalesced(tensors, opts)->getFuture());
 }
 
 c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::reduce(
     std::vector<at::Tensor>& tensors,
     const c10d::ReduceOptions& opts) {
   return c10::make_intrusive<WorkFairring>(
-      c10d::OpType::REDUCE, ncclPG_->reduce(tensors, opts)->getFuture());
+      c10d::OpType::REDUCE, getNcclPG().reduce(tensors, opts)->getFuture());
 }
 
 c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::allgather(
@@ -221,14 +209,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::allgather(
     for (const c10::DeviceIndex& idx : deviceSet) {
       devices.emplace_back(c10::kCUDA, idx);
     }
-    machine_ = std::make_unique<fairring::MachineFairring>(
-        store_,
-        rank_,
-        size_,
-        std::move(devices),
-        maxMemoryAllocatedInBytes_,
-        maxPaddingAllocatedInBytes_,
-        minParallelism_);
+    initFairring(std::move(devices));
   }
   return c10::make_intrusive<WorkFairring>(
       c10d::OpType::ALLGATHER, machine_->allGather(std::move(data)));
@@ -263,14 +244,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
     for (const c10::DeviceIndex& idx : deviceSet) {
       devices.emplace_back(c10::kCUDA, idx);
     }
-    machine_ = std::make_unique<fairring::MachineFairring>(
-        store_,
-        rank_,
-        size_,
-        std::move(devices),
-        maxMemoryAllocatedInBytes_,
-        maxPaddingAllocatedInBytes_,
-        minParallelism_);
+    initFairring(std::move(devices));
   }
   return c10::make_intrusive<WorkFairring>(
       c10d::OpType::_ALLGATHER_BASE, machine_->allGather(std::move(data)));
@@ -283,7 +257,8 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
         const c10d::AllgatherOptions& opts) {
   return c10::make_intrusive<WorkFairring>(
       c10d::OpType::ALLGATHER_COALESCED,
-      ncclPG_->allgather_coalesced(outputTensorLists, inputTensors, opts)
+      getNcclPG()
+          .allgather_coalesced(outputTensorLists, inputTensors, opts)
           ->getFuture());
 }
 
@@ -293,7 +268,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::gather(
     const c10d::GatherOptions& opts) {
   return c10::make_intrusive<WorkFairring>(
       c10d::OpType::GATHER,
-      ncclPG_->gather(outputTensors, inputTensors, opts)->getFuture());
+      getNcclPG().gather(outputTensors, inputTensors, opts)->getFuture());
 }
 
 c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::scatter(
@@ -302,7 +277,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::scatter(
     const c10d::ScatterOptions& opts) {
   return c10::make_intrusive<WorkFairring>(
       c10d::OpType::SCATTER,
-      ncclPG_->scatter(outputTensors, inputTensors, opts)->getFuture());
+      getNcclPG().scatter(outputTensors, inputTensors, opts)->getFuture());
 }
 
 c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
@@ -345,14 +320,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
     for (const c10::DeviceIndex& idx : deviceSet) {
       devices.emplace_back(c10::kCUDA, idx);
     }
-    machine_ = std::make_unique<fairring::MachineFairring>(
-        store_,
-        rank_,
-        size_,
-        std::move(devices),
-        maxMemoryAllocatedInBytes_,
-        maxPaddingAllocatedInBytes_,
-        minParallelism_);
+    initFairring(std::move(devices));
   }
   return c10::make_intrusive<WorkFairring>(
       c10d::OpType::REDUCE_SCATTER,
@@ -388,14 +356,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
     for (const c10::DeviceIndex& idx : deviceSet) {
       devices.emplace_back(c10::kCUDA, idx);
     }
-    machine_ = std::make_unique<fairring::MachineFairring>(
-        store_,
-        rank_,
-        size_,
-        std::move(devices),
-        maxMemoryAllocatedInBytes_,
-        maxPaddingAllocatedInBytes_,
-        minParallelism_);
+    initFairring(std::move(devices));
   }
   return c10::make_intrusive<WorkFairring>(
       c10d::OpType::_REDUCE_SCATTER_BASE,
@@ -427,13 +388,13 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::alltoall(
     const c10d::AllToAllOptions& opts) {
   return c10::make_intrusive<WorkFairring>(
       c10d::OpType::ALLTOALL,
-      ncclPG_->alltoall(outputTensors, inputTensors, opts)->getFuture());
+      getNcclPG().alltoall(outputTensors, inputTensors, opts)->getFuture());
 }
 
 void ProcessGroupFairring::monitoredBarrier(
     const c10d::BarrierOptions& opts,
     bool waitAllRanks) {
-  ncclPG_->monitoredBarrier(opts, waitAllRanks);
+  getNcclPG().monitoredBarrier(opts, waitAllRanks);
 }
 
 c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::send(
@@ -441,7 +402,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::send(
     int dstRank,
     int tag) {
   return c10::make_intrusive<WorkFairring>(
-      c10d::OpType::SEND, ncclPG_->send(tensors, dstRank, tag)->getFuture());
+      c10d::OpType::SEND, getNcclPG().send(tensors, dstRank, tag)->getFuture());
 }
 
 c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::recv(
@@ -449,20 +410,42 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::recv(
     int srcRank,
     int tag) {
   return c10::make_intrusive<WorkFairring>(
-      c10d::OpType::RECV, ncclPG_->recv(tensors, srcRank, tag)->getFuture());
+      c10d::OpType::RECV, getNcclPG().recv(tensors, srcRank, tag)->getFuture());
 }
 
 c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
     recvAnysource(std::vector<at::Tensor>& tensors, int tag) {
   return c10::make_intrusive<WorkFairring>(
       c10d::OpType::RECVANYSOURCE,
-      ncclPG_->recvAnysource(tensors, tag)->getFuture());
+      getNcclPG().recvAnysource(tensors, tag)->getFuture());
 }
 
 c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::barrier(
     const c10d::BarrierOptions& opts) {
   return c10::make_intrusive<WorkFairring>(
-      c10d::OpType::BARRIER, ncclPG_->barrier(opts)->getFuture());
+      c10d::OpType::BARRIER, getNcclPG().barrier(opts)->getFuture());
+}
+
+c10d::ProcessGroupNCCL& ProcessGroupFairring::getNcclPG() {
+  if (!ncclPG_) {
+    ncclPG_ = c10::make_intrusive<c10d::ProcessGroupNCCL>(
+        c10::make_intrusive<c10d::PrefixStore>("nccl", store_),
+        rank_,
+        size_,
+        c10d::ProcessGroupNCCL::Options::create(isHighPriorityStream_));
+  }
+  return *ncclPG_;
+}
+
+void ProcessGroupFairring::initFairring(std::vector<c10::Device> devices) {
+  machine_ = std::make_unique<fairring::MachineFairring>(
+      c10::make_intrusive<c10d::PrefixStore>("fairring", store_),
+      rank_,
+      size_,
+      std::move(devices),
+      maxMemoryAllocatedInBytes_,
+      maxPaddingAllocatedInBytes_,
+      minParallelism_);
 }
 
 } // namespace fairring

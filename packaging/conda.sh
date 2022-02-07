@@ -4,7 +4,7 @@ set -ex
 FAIRRING_BUILD="py${PYTHON_VERSION}_cuda${CUDA_MAJOR_VERSION}.${CUDA_MINOR_VERSION}"
 
 PYTORCH_VERSION=$(conda search --json 'pytorch[channel=pytorch-test]' | python -c "import json, sys; d = json.load(sys.stdin); p = max((p for p in d['pytorch'] if p['build'].startswith('${FAIRRING_BUILD}_cudnn')), key=lambda p: p['timestamp']); sys.stdout.write(p['version'] + '\n')")
-DATE=$(echo ${PYTORCH_VERSION} | sed -re 's/^.*\.dev([0-9]+)$/\1/')
+DATE=$(echo "${PYTORCH_VERSION}" | sed -re 's/^.*\.dev([0-9]+)$/\1/')
 
 FAIRRING_LATEST_TAG=$(git tag -l --sort=version:refname 'v*' | tail -n 1 | sed -re 's/^v//')
 FAIRRING_VERSION="${FAIRRING_LATEST_TAG}.dev${DATE}"

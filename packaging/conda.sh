@@ -20,6 +20,7 @@ fi
 
 export PYTORCH_VERSION
 export FAIRRING_VERSION
+export FAIRRING_LATEST_TAG
 export CUDA_HOME=/usr/local/cuda-${CUDA_MAJOR_VERSION}.${CUDA_MINOR_VERSION}
 export PATH="$CUDA_HOME/bin:$PATH"
 

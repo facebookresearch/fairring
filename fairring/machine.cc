@@ -22,11 +22,9 @@
 
 namespace {
 
-c10::optional<std::string> getBootID() {
+std::string getBootID() {
   std::ifstream f{"/proc/sys/kernel/random/boot_id"};
-  if (!f.is_open()) {
-    return c10::nullopt;
-  }
+  MY_CHECK(f.is_open());
   std::string v;
   getline(f, v);
   f.close();
@@ -42,7 +40,7 @@ DeploymentInfo detectDeploymentInfo(
     int rank,
     int size,
     int64_t numDevices) {
-  std::string machineId = getBootID().value();
+  std::string machineId = getBootID();
   TORCH_CHECK(numDevices > 0);
   store->set(
       "rdv/" + std::to_string(rank) + "/machine_idx",

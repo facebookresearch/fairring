@@ -62,7 +62,7 @@ void ProcessGroupFairring::WorkFairring::synchronize() {
 }
 
 bool ProcessGroupFairring::WorkFairring::wait(
-    std::chrono::milliseconds timeout) {
+    std::chrono::milliseconds /* timeout */) {
   future_->wait();
   return true;
 }
@@ -109,7 +109,7 @@ ProcessGroupFairring::ProcessGroupFairring(
     int size,
     c10::intrusive_ptr<OptionsFairring> options)
     : ProcessGroup(rank, size),
-      store_(std::move(store)),
+      store_(store),
       isHighPriorityStream_(options->isHighPriorityStream_),
       maxMemoryAllocatedInBytes_(options->maxMemoryAllocatedInBytes_),
       maxPaddingAllocatedInBytes_(options->maxPaddingAllocatedInBytes_),
@@ -173,7 +173,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::reduce(
 c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::allgather(
     std::vector<std::vector<at::Tensor>>& outputTensors,
     std::vector<at::Tensor>& inputTensors,
-    const c10d::AllgatherOptions& opts) {
+    const c10d::AllgatherOptions& /* opts */) {
   MY_CHECK(inputTensors.size() == outputTensors.size());
   int64_t numDevicesPerRank = inputTensors.size();
   std::vector<fairring::MachineFairring::TensorPair> data;
@@ -219,7 +219,7 @@ c10::intrusive_ptr<c10d::ProcessGroup::Work> ProcessGroupFairring::
     _allgather_base(
         at::Tensor& outputBuffer,
         at::Tensor& inputBuffer,
-        const c10d::AllgatherOptions& opts) {
+        const c10d::AllgatherOptions& /* opts */) {
   MY_CHECK(inputBuffer.layout() == at::kStrided);
   MY_CHECK(inputBuffer.is_cuda());
   MY_CHECK(inputBuffer.is_non_overlapping_and_dense());

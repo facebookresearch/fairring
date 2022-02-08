@@ -135,8 +135,8 @@ class ProcessGroupFairring : public c10d::ProcessGroup {
           c10d::ReduceScatterOptions()) override;
 
   c10::intrusive_ptr<c10d::ProcessGroup::Work> _reduce_scatter_base(
-      at::Tensor&,
-      at::Tensor&,
+      at::Tensor& outputBuffer,
+      at::Tensor& inputBuffer,
       const c10d::ReduceScatterOptions& opts =
           c10d::ReduceScatterOptions()) override;
 

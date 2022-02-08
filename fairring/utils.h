@@ -87,7 +87,7 @@ class CudaStream {
  public:
   CudaStream() {}
 
-  CudaStream(c10::DeviceIndex index) : index_(index) {
+  explicit CudaStream(c10::DeviceIndex index) : index_(index) {
     c10::cuda::CUDAGuard g(index);
     cudaStream_t stream;
     CUDA_CHECK(
@@ -276,7 +276,7 @@ inline constexpr T roundUpToNearestMultiple(T val, T factor) {
 // Each shard/slot/slice must contain a whole number of elements, whether they
 // are halfs, floats or doubles. We thus align them to (a multiple of) this
 // number of bytes, which is the size of doubles, the largest data type.
-static constexpr int64_t kAlignment = 8;
+constexpr int64_t kAlignment = 8;
 
 struct Layout {
   int64_t slotSizeInBytes;

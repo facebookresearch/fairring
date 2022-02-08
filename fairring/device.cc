@@ -8,6 +8,7 @@
 
 #include <fairring/device.h>
 
+#include <algorithm>
 #include <future>
 
 #include <ATen/Functions.h>
@@ -15,15 +16,6 @@
 namespace fairring {
 
 namespace {
-
-std::vector<CudaStream> makeManyCudaStreams(int64_t amount, int deviceIdx) {
-  std::vector<CudaStream> result;
-  result.reserve(amount);
-  for (const auto _ : c10::irange(amount)) {
-    result.push_back(CudaStream(deviceIdx));
-  }
-  return result;
-}
 
 std::vector<at::cuda::CUDAEvent> makeManyCudaEvents(int n) {
   return std::vector<at::cuda::CUDAEvent>(n);
@@ -33,9 +25,8 @@ template <typename... T>
 auto makeManyCudaEvents(int n, T... args) {
   std::vector<decltype(makeManyCudaEvents(args...))> result;
   result.reserve(n);
-  for (const auto idx : c10::irange(n)) {
-    result.push_back(makeManyCudaEvents(args...));
-  }
+  std::for_each(
+      0, n, [&](auto) { result.push_back(makeManyCudaEvents(args...)); });
   return result;
 }
 

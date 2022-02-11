@@ -3,11 +3,12 @@ set -ex
 
 FAIRRING_BUILD="py${PYTHON_VERSION}_cuda${CUDA_MAJOR_VERSION}.${CUDA_MINOR_VERSION}"
 
-PYTORCH_VERSION=$(conda search --json 'pytorch[channel=pytorch-test]' | python -c "import json, sys; d = json.load(sys.stdin); p = max((p for p in d['pytorch'] if p['build'].startswith('${FAIRRING_BUILD}_cudnn')), key=lambda p: p['timestamp']); sys.stdout.write(p['version'] + '\n')")
-DATE=$(echo "${PYTORCH_VERSION}" | sed -re 's/^.*\.dev([0-9]+)$/\1/')
+PYTORCH_VERSION_AND_MD5=$(conda search --json 'pytorch[channel=pytorch-test]' | python -c "import json, sys; d = json.load(sys.stdin); p = max((p for p in d['pytorch'] if p['build'].startswith('${FAIRRING_BUILD}_cudnn')), key=lambda p: p['timestamp']); sys.stdout.write(p['version'] + ' ' + p['md5'] + '\n')")
+PYTORCH_VERSION=$(echo $PYTORCH_VERSION_AND_MD5 | awk '{ print $1 }')
+PYTORCH_MD5=$(echo $PYTORCH_VERSION_AND_MD5 | awk '{ print substr($2,1,8) }')
 
 FAIRRING_LATEST_TAG=$(git tag -l --sort=version:refname 'v*' | tail -n 1 | sed -re 's/^v//')
-FAIRRING_VERSION="${FAIRRING_LATEST_TAG}.dev${DATE}"
+FAIRRING_VERSION="${FAIRRING_LATEST_TAG}.dev${PYTORCH_MD5}"
 
 if conda search --json "fairring==${FAIRRING_VERSION}[channel=fairring,build=${FAIRRING_BUILD}]"; then
     exit 0

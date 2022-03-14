@@ -47,11 +47,11 @@ workflows:
           python_version: '3.9'
           cuda_major_version: '10'
           cuda_minor_version: '2'
-      # - build_conda_package:
-      #     name: conda_py3.10_cuda10.2
-      #     python_version: '3.10'
-      #     cuda_major_version: '10'
-      #     cuda_minor_version: '2'
+      - build_conda_package:
+          name: conda_py3.10_cuda10.2
+          python_version: '3.10'
+          cuda_major_version: '10'
+          cuda_minor_version: '2'
       - build_conda_package:
           name: conda_py3.7_cuda11.1
           python_version: '3.7'
@@ -67,11 +67,11 @@ workflows:
           python_version: '3.9'
           cuda_major_version: '11'
           cuda_minor_version: '1'
-      # - build_conda_package:
-      #     name: conda_py3.10_cuda11.1
-      #     python_version: '3.10'
-      #     cuda_major_version: '11'
-      #     cuda_minor_version: '1'
+      - build_conda_package:
+          name: conda_py3.10_cuda11.1
+          python_version: '3.10'
+          cuda_major_version: '11'
+          cuda_minor_version: '1'
       - build_conda_package:
           name: conda_py3.7_cuda11.3
           python_version: '3.7'
@@ -87,11 +87,11 @@ workflows:
           python_version: '3.9'
           cuda_major_version: '11'
           cuda_minor_version: '3'
-      # - build_conda_package:
-      #     name: conda_py3.10_cuda11.3
-      #     python_version: '3.10'
-      #     cuda_major_version: '11'
-      #     cuda_minor_version: '3'
+      - build_conda_package:
+          name: conda_py3.10_cuda11.3
+          python_version: '3.10'
+          cuda_major_version: '11'
+          cuda_minor_version: '3'
       - build_conda_package:
           name: conda_py3.7_cuda11.5
           python_version: '3.7'

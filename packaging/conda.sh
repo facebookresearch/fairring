@@ -12,18 +12,13 @@ if conda search --json "fairring==${FAIRRING_VERSION}[channel=fairring,build=${F
     exit 0
 fi
 
-CUDATOOLKIT_CHANNEL="nvidia"
-if [[ $CUDA_MAJOR_VERSION == 11 && $CUDA_MINOR_VERSION == 5 ]]; then
-    CUDATOOLKIT_CHANNEL="conda-forge"
-fi
-
 export PYTORCH_VERSION
 export FAIRRING_VERSION
 export FAIRRING_LATEST_TAG
 export CUDA_HOME=/usr/local/cuda-${CUDA_MAJOR_VERSION}.${CUDA_MINOR_VERSION}
 export PATH="$CUDA_HOME/bin:$PATH"
 
-conda build -c defaults -c $CUDATOOLKIT_CHANNEL -c pytorch -c pytorch --no-anaconda-upload --python "$PYTHON_VERSION" packaging/fairring
+conda build -c defaults -c nvidia -c pytorch --no-anaconda-upload --python "$PYTHON_VERSION" packaging/fairring
 
 conda install -yq anaconda-client
 anaconda -t "${ANACONDA_TOKEN}" upload -u fairring --label main --force --no-progress /opt/conda/conda-bld/linux-64/fairring-*.tar.bz2

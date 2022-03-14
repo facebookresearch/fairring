@@ -25,13 +25,11 @@ jobs:
 
 workflows:
   nightly:
-    triggers:
-      - schedule:
-          cron: "0 0,6,12,18 * * *"
-          filters:
-            branches:
-              only:
-                - main
+    when:
+      and:
+        - equal: [ main, << pipeline.git.branch >> ]
+        # - equal: [ scheduled_pipeline, << pipeline.trigger_source >> ]
+        # - equal: [ "nightly", << pipeline.schedule.name >> ]
 
     jobs:
       - build_conda_package:
